@@ -1,0 +1,32 @@
+name: StravAI Headless Sync
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  sync-job:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Dependencies
+        run: npm install
+
+      - name: Run StravAI Sync
+        run: npm run sync
+        env:
+          API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          STRAVA_CLIENT_ID: ${{ secrets.STRAVA_CLIENT_ID }}
+          STRAVA_CLIENT_SECRET: ${{ secrets.STRAVA_CLIENT_SECRET }}
+          STRAVA_REFRESH_TOKEN: ${{ secrets.STRAVA_REFRESH_TOKEN }}
+          GOAL_RACE_TYPE: ${{ secrets.GOAL_RACE_TYPE }}
+          GOAL_RACE_DATE: ${{ secrets.GOAL_RACE_DATE }}
+          GOAL_RACE_TIME: ${{ secrets.GOAL_RACE_TIME }}
