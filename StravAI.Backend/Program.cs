@@ -123,7 +123,8 @@ app.MapGet("/webhook", ([FromQuery(Name = "hub.mode")] string mode,
     
     if (mode == "subscribe" && token == expected) {
         AddLog("HANDSHAKE_SUCCESS: Returning challenge to Strava.");
-        return Results.Ok(new { hub_challenge = challenge });
+        // CRITICAL: Use Dictionary for 'hub.challenge' because dot is not allowed in anonymous type property names
+        return Results.Ok(new Dictionary<string, string> { { "hub.challenge", challenge } });
     }
     
     AddLog("HANDSHAKE_FAILED: Token mismatch or invalid mode.", "ERROR");
