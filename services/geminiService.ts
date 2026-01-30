@@ -133,6 +133,11 @@ export class GeminiCoachService {
     throw new Error("Maximum retries reached for Gemini API.");
   }
 
+  private getCETTimestamp(): string {
+    const cetTime = new Date(new Date().getTime() + (1 * 60 * 60 * 1000));
+    return cetTime.toISOString().replace('T', ' ').substring(0, 19) + " CET";
+  }
+
   formatPlaceholder(): string {
     return `
 ${BORDER}
@@ -140,6 +145,7 @@ Strava AI analysis
 ---
 ${STRAVAI_PLACEHOLDER}
 
+Analyzed at: ${this.getCETTimestamp()}
 *${STRAVAI_SIGNATURE}*
 ${BORDER}
     `.trim();
@@ -161,6 +167,7 @@ StravAI Performance Report
 - **Target:** ${analysis.nextTrainingSuggestion.targetMetrics}
 - **Focus:** ${analysis.nextTrainingSuggestion.description}
 
+Analyzed at: ${this.getCETTimestamp()}
 *${STRAVAI_SIGNATURE}*
 ${BORDER}
     `.trim();
