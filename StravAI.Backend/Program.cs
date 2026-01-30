@@ -20,11 +20,11 @@ app.UseCors("AllowAll");
 // Simple in-memory log buffer for diagnostics UI
 var logs = new ConcurrentQueue<string>();
 void AddLog(string message, string level = "INFO") {
-    var timestamp = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss.fff");
+    var timestamp = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
     var logEntry = $"[{timestamp}] [{level}] {message}";
     logs.Enqueue(logEntry);
     while (logs.Count > 200) logs.TryDequeue(out _);
-    Console.WriteLine(logEntry); // Visible in Koyeb/Docker logs
+    Console.WriteLine(logEntry); 
 }
 
 // Configuration Helper
@@ -32,109 +32,99 @@ var config = app.Configuration;
 string GetEnv(string key) {
     var val = Environment.GetEnvironmentVariable(key);
     if (!string.IsNullOrEmpty(val)) return val;
-    
-    // Explicit check for the key names seen in Koyeb
     if (key == "API_KEY") {
         val = Environment.GetEnvironmentVariable("GEMINI_API_KEY");
         if (!string.IsNullOrEmpty(val)) return val;
     }
-    
     return config[key] ?? "";
 }
 
-// Global Request Logger Middleware - Log EVERY hit
+// Global Request Logger Middleware
 app.Use(async (context, next) => {
-    AddLog($"HTTP_{context.Request.Method}: {context.Request.Path}{context.Request.QueryString}");
-    await next();
-    if (context.Response.StatusCode >= 400) {
-        AddLog($"RESPONSE_ERROR: {context.Response.StatusCode} for {context.Request.Path}", "WARNING");
+    if (context.Request.Path != "/logs" && context.Request.Path != "/health") {
+        AddLog($"HTTP_{context.Request.Method}: {context.Request.Path}");
     }
+    await next();
 });
 
-// Startup Diagnostics
-AddLog("==================================================");
-AddLog("STRAVAI BACKEND INITIALIZING...");
-AddLog($"Deployment Port: {port}");
-AddLog("Configuration Status:");
-AddLog($" - Gemini API: {(string.IsNullOrEmpty(GetEnv("API_KEY")) ? "❌ MISSING" : "✅ LOADED")}");
-AddLog($" - Strava ID: {(string.IsNullOrEmpty(GetEnv("STRAVA_CLIENT_ID")) ? "❌ MISSING" : "✅ LOADED")}");
-AddLog($" - Strava Secret: {(string.IsNullOrEmpty(GetEnv("STRAVA_CLIENT_SECRET")) ? "❌ MISSING" : "✅ LOADED")}");
-AddLog($" - Strava Refresh: {(string.IsNullOrEmpty(GetEnv("STRAVA_REFRESH_TOKEN")) ? "❌ MISSING" : "✅ LOADED")}");
-AddLog($" - Verify Token: '{GetEnv("STRAVA_VERIFY_TOKEN") ?? "STRAVAI_SECURE_TOKEN"}'");
-AddLog("==================================================");
-
-app.MapGet("/", () => {
-    AddLog("Root pinged.");
-    return "StravAI Backend is fully operational.";
-});
-
-app.MapGet("/health", () => {
-    AddLog("Health check processed.");
-    return Results.Ok(new { 
-        status = "healthy", 
-        timestamp = DateTime.UtcNow,
-        config = new {
-            gemini_api_key = !string.IsNullOrEmpty(GetEnv("API_KEY")),
-            strava_client_id = !string.IsNullOrEmpty(GetEnv("STRAVA_CLIENT_ID")),
-            strava_client_secret = !string.IsNullOrEmpty(GetEnv("STRAVA_CLIENT_SECRET")),
-            strava_refresh_token = !string.IsNullOrEmpty(GetEnv("STRAVA_REFRESH_TOKEN")),
-            strava_verify_token = !string.IsNullOrEmpty(GetEnv("STRAVA_VERIFY_TOKEN"))
-        }
-    });
-});
-
+app.MapGet("/", () => "StravAI Backend is fully operational.");
+app.MapGet("/health", () => Results.Ok(new { status = "healthy", time = DateTime.UtcNow }));
 app.MapGet("/logs", () => Results.Ok(logs.ToArray()));
 
-app.MapPost("/webhook/ping", () => {
-    AddLog("UI_SIGNAL: Connection test successful from management console.");
-    return Results.Ok(new { message = "Connection verified", time = DateTime.UtcNow });
+// Manual Sync Trigger
+app.MapPost("/sync", (IHttpClientFactory clientFactory) => {
+    AddLog("ACTION: Manual Global Sync triggered from console.");
+    _ = Task.Run(async () => {
+        try {
+            using var client = clientFactory.CreateClient();
+            AddLog("SYNC_STEP: Fetching last 30 activities...");
+            
+            var accessToken = await GetStravaAccessToken(client);
+            if (string.IsNullOrEmpty(accessToken)) return;
+
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+            var activities = await client.GetFromJsonAsync<List<JsonElement>>("https://www.strava.com/api/v3/athlete/activities?per_page=30");
+            
+            int processedCount = 0;
+            foreach (var act in activities ?? new()) {
+                var id = act.GetProperty("id").GetInt64();
+                var type = act.GetProperty("type").GetString();
+                var desc = act.TryGetProperty("description", out var d) ? d.GetString() : "";
+
+                if (type == "Run" && (string.IsNullOrEmpty(desc) || !desc.Contains("[StravAI-Processed]"))) {
+                    AddLog($"SYNC_HIT: Found pending run '{act.GetProperty("name").GetString()}'. Processing...");
+                    await ProcessActivityAsync(id, clientFactory);
+                    processedCount++;
+                }
+            }
+            AddLog($"SYNC_COMPLETE: Processed {processedCount} activities.");
+        } catch (Exception ex) {
+            AddLog($"SYNC_ERROR: {ex.Message}", "ERROR");
+        }
+    });
+    return Results.Accepted();
 });
 
-// Subscription Listing Proxy
 app.MapGet("/webhook/subscriptions", async (IHttpClientFactory clientFactory) => {
-    AddLog("ACTION: Requesting active webhook list from Strava...");
     try {
         using var client = clientFactory.CreateClient();
         string clientId = GetEnv("STRAVA_CLIENT_ID");
         string clientSecret = GetEnv("STRAVA_CLIENT_SECRET");
         var res = await client.GetAsync($"https://www.strava.com/api/v3/push_subscriptions?client_id={clientId}&client_secret={clientSecret}");
-        var content = await res.Content.ReadAsStringAsync();
-        
-        if (res.IsSuccessStatusCode) {
-            AddLog("SUCCESS: Webhooks listed successfully.");
-            return Results.Content(content, "application/json");
-        } else {
-            AddLog($"ERROR: Strava returned {res.StatusCode}: {content}", "ERROR");
-            return Results.Problem(content);
-        }
+        return Results.Content(await res.Content.ReadAsStringAsync(), "application/json");
     } catch (Exception ex) {
-        AddLog($"FATAL: Exception in subscription list: {ex.Message}", "ERROR");
         return Results.Problem(ex.Message);
     }
 });
 
-// Handshake Validation (GET)
-app.MapGet("/webhook", ([FromQuery(Name = "hub.mode")] string mode, 
-                        [FromQuery(Name = "hub.challenge")] string challenge, 
-                        [FromQuery(Name = "hub.verify_token")] string token) => 
+app.MapDelete("/webhook/subscriptions/{id}", async (int id, IHttpClientFactory clientFactory) => {
+    AddLog($"ACTION: Deleting webhook subscription {id}...");
+    try {
+        using var client = clientFactory.CreateClient();
+        string clientId = GetEnv("STRAVA_CLIENT_ID");
+        string clientSecret = GetEnv("STRAVA_CLIENT_SECRET");
+        var res = await client.DeleteAsync($"https://www.strava.com/api/v3/push_subscriptions/{id}?client_id={clientId}&client_secret={clientSecret}");
+        if (res.IsSuccessStatusCode) {
+            AddLog($"SUCCESS: Webhook {id} removed.");
+            return Results.NoContent();
+        }
+        return Results.Problem(await res.Content.ReadAsStringAsync());
+    } catch (Exception ex) {
+        return Results.Problem(ex.Message);
+    }
+});
+
+app.MapGet("/webhook", ([FromQuery(Name = "hub.mode")] string mode, [FromQuery(Name = "hub.challenge")] string challenge, [FromQuery(Name = "hub.verify_token")] string token) => 
 {
     var expected = GetEnv("STRAVA_VERIFY_TOKEN") ?? "STRAVAI_SECURE_TOKEN";
-    AddLog($"HANDSHAKE_RECEIVED: Mode={mode}, GivenToken='{token}', ExpectedToken='{expected}'");
-    
     if (mode == "subscribe" && token == expected) {
-        AddLog("HANDSHAKE_SUCCESS: Returning challenge to Strava.");
-        // CRITICAL: Use Dictionary for 'hub.challenge' because dot is not allowed in anonymous type property names
+        AddLog("HANDSHAKE_SUCCESS: Handshake verified.");
         return Results.Ok(new Dictionary<string, string> { { "hub.challenge", challenge } });
     }
-    
-    AddLog("HANDSHAKE_FAILED: Token mismatch or invalid mode.", "ERROR");
     return Results.BadRequest("Verification Failed.");
 });
 
-// Registration Proxy (POST)
 app.MapPost("/webhook/register", async ([FromBody] RegisterRequest req, IHttpClientFactory clientFactory) => {
-    AddLog($"REGISTRATION_START: Attempting to register '{req.CallbackUrl}' with token '{req.VerifyToken}'");
-    
     try {
         using var client = clientFactory.CreateClient();
         var formData = new FormUrlEncodedContent(new[] {
@@ -143,112 +133,65 @@ app.MapPost("/webhook/register", async ([FromBody] RegisterRequest req, IHttpCli
             new KeyValuePair<string, string>("callback_url", req.CallbackUrl),
             new KeyValuePair<string, string>("verify_token", req.VerifyToken)
         });
-
-        AddLog("REGISTRATION_STEP: Sending POST to Strava v3/push_subscriptions...");
         var res = await client.PostAsync("https://www.strava.com/api/v3/push_subscriptions", formData);
-        var content = await res.Content.ReadAsStringAsync();
-        
-        if (res.IsSuccessStatusCode) {
-            AddLog($"REGISTRATION_SUCCESS: {content}");
-            return Results.Ok(JsonSerializer.Deserialize<JsonElement>(content));
-        } else {
-            AddLog($"REGISTRATION_ERROR: Strava rejected request ({res.StatusCode}). Details: {content}", "ERROR");
-            return Results.Problem(content);
-        }
+        return Results.Content(await res.Content.ReadAsStringAsync(), "application/json");
     } catch (Exception ex) {
-        AddLog($"REGISTRATION_EXCEPTION: {ex.Message}", "ERROR");
         return Results.Problem(ex.Message);
     }
 });
 
-// Webhook Event Handler (POST)
 app.MapPost("/webhook", ([FromBody] StravaWebhookEvent @event, IHttpClientFactory clientFactory) => 
 {
-    AddLog($"WEBHOOK_EVENT: {@event.ObjectType}.{@event.AspectType} (ID: {@event.ObjectId}) received.");
-    
     if (@event.ObjectType == "activity" && (@event.AspectType == "create" || @event.AspectType == "update")) {
-        AddLog($"PIPELINE_TRIGGER: Starting background analysis for activity {@event.ObjectId}");
-        _ = Task.Run(async () => {
-            try { await ProcessActivityAsync(@event.ObjectId, clientFactory); }
-            catch (Exception ex) { AddLog($"FATAL_PIPELINE_ERROR: Activity {@event.ObjectId} failed: {ex.Message}", "ERROR"); }
-        });
-    } else {
-        AddLog($"EVENT_SKIPPED: Not an activity update/creation.");
+        AddLog($"WEBHOOK_EVENT: Activity {@event.ObjectId} updated. Starting pipeline...");
+        _ = Task.Run(() => ProcessActivityAsync(@event.ObjectId, clientFactory));
     }
-    
     return Results.Ok();
 });
 
-async Task ProcessActivityAsync(long activityId, IHttpClientFactory clientFactory) {
-    var traceId = Guid.NewGuid().ToString().Substring(0, 8);
-    using var client = clientFactory.CreateClient();
-    AddLog($"[{traceId}] >>> Starting Pipeline for Activity {activityId}");
-
-    // 1. Refreshing Strava Auth
-    AddLog($"[{traceId}] Step 1/5: Refreshing Strava credentials...");
+async Task<string?> GetStravaAccessToken(HttpClient client) {
     var authRes = await client.PostAsync("https://www.strava.com/oauth/token", new FormUrlEncodedContent(new[] {
         new KeyValuePair<string, string>("client_id", GetEnv("STRAVA_CLIENT_ID")),
         new KeyValuePair<string, string>("client_secret", GetEnv("STRAVA_CLIENT_SECRET")),
         new KeyValuePair<string, string>("refresh_token", GetEnv("STRAVA_REFRESH_TOKEN")),
         new KeyValuePair<string, string>("grant_type", "refresh_token")
     }));
-    
-    if (!authRes.IsSuccessStatusCode) {
-        var errBody = await authRes.Content.ReadAsStringAsync();
-        AddLog($"[{traceId}] AUTH_FAILURE: {errBody}", "ERROR");
-        return;
-    }
-    var authData = await authRes.Content.ReadFromJsonAsync<JsonElement>();
-    var accessToken = authData.GetProperty("access_token").GetString();
-    AddLog($"[{traceId}] Auth successful.");
+    if (!authRes.IsSuccessStatusCode) return null;
+    var data = await authRes.Content.ReadFromJsonAsync<JsonElement>();
+    return data.GetProperty("access_token").GetString();
+}
 
-    // 2. Fetch Activity Data
-    AddLog($"[{traceId}] Step 2/5: Fetching run details from Strava...");
-    client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-    var activity = await client.GetFromJsonAsync<JsonElement>($"https://www.strava.com/api/v3/activities/{activityId}");
-    var name = activity.GetProperty("name").GetString();
-    var type = activity.GetProperty("type").GetString();
-    
-    if (type != "Run") {
-        AddLog($"[{traceId}] SKIPPED: Activity '{name}' is a '{type}', not a Run.");
-        return;
-    }
-    AddLog($"[{traceId}] Processing Run: '{name}'");
+async Task ProcessActivityAsync(long activityId, IHttpClientFactory clientFactory) {
+    var traceId = Guid.NewGuid().ToString().Substring(0, 5);
+    try {
+        using var client = clientFactory.CreateClient();
+        var token = await GetStravaAccessToken(client);
+        if (token == null) { AddLog($"[{traceId}] Auth Failure.", "ERROR"); return; }
 
-    // 3. Fetch History context
-    AddLog($"[{traceId}] Step 3/5: Gathering recent activity history...");
-    var historyRes = await client.GetAsync("https://www.strava.com/api/v3/athlete/activities?per_page=15");
-    var historyJson = await historyRes.Content.ReadAsStringAsync();
-    AddLog($"[{traceId}] History context retrieved.");
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        var activity = await client.GetFromJsonAsync<JsonElement>($"https://www.strava.com/api/v3/activities/{activityId}");
+        
+        if (activity.GetProperty("type").GetString() != "Run") return;
 
-    // 4. Consulting AI
-    AddLog($"[{traceId}] Step 4/5: Consulting Coach Gemini AI...");
-    var apiKey = GetEnv("API_KEY");
-    var goalDate = GetEnv("GOAL_RACE_DATE") ?? "Future Date";
-    var goalType = GetEnv("GOAL_RACE_TYPE") ?? "Marathon";
-    
-    var prompt = $"Analyze this Strava run for an athlete training for a {goalType} on {goalDate}. Activity: {activity.GetRawText()}. History: {historyJson}. Provide a short summary and a specific workout suggestion for tomorrow.";
-    var geminiRequest = new { contents = new[] { new { parts = new[] { new { text = prompt } } } } };
-    
-    var geminiRes = await client.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={apiKey}", geminiRequest);
-    if (!geminiRes.IsSuccessStatusCode) {
-        AddLog($"[{traceId}] AI_FAILURE: {await geminiRes.Content.ReadAsStringAsync()}", "ERROR");
-        return;
-    }
-    var geminiData = await geminiRes.Content.ReadFromJsonAsync<JsonElement>();
-    var aiNotes = geminiData.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString();
-    AddLog($"[{traceId}] AI Analysis Complete.");
+        var historyRes = await client.GetAsync("https://www.strava.com/api/v3/athlete/activities?per_page=10");
+        var historyJson = await historyRes.Content.ReadAsStringAsync();
 
-    // 5. Update Strava Description
-    AddLog($"[{traceId}] Step 5/5: Writing report back to Strava activity...");
-    var updateRes = await client.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{activityId}", new { 
-        description = $"[StravAI Coach Report]\n\n{aiNotes}\n\n[StravAI-Processed]" 
-    });
+        var prompt = $"Analyze this Strava run for a runner training for {GetEnv("GOAL_RACE_TYPE")} on {GetEnv("GOAL_RACE_DATE")}. Activity: {activity.GetRawText()}. History: {historyJson}. Provide a professional coaching summary and a training tip for tomorrow.";
+        var geminiRequest = new { contents = new[] { new { parts = new[] { new { text = prompt } } } } };
+        
+        var geminiRes = await client.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={GetEnv("API_KEY")}", geminiRequest);
+        var geminiData = await geminiRes.Content.ReadFromJsonAsync<JsonElement>();
+        var aiNotes = geminiData.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString();
 
-    if (updateRes.IsSuccessStatusCode) {
-        AddLog($"[{traceId}] <<< PIPELINE FINISHED SUCCESSFULLY.");
-    } else {
-        AddLog($"[{traceId}] UPDATE_FAILURE: {await updateRes.Content.ReadAsStringAsync()}", "ERROR");
+        var cetTime = DateTime.UtcNow.AddHours(1);
+        var timestampStr = cetTime.ToString("yyyy-MM-dd HH:mm:ss") + " CET";
+
+        await client.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{activityId}", new { 
+            description = aiNotes + $"\n\nAnalyzed at: {timestampStr}\n[StravAI-Processed]" 
+        });
+        AddLog($"[{traceId}] SUCCESS: Activity {activityId} updated.");
+    } catch (Exception ex) {
+        AddLog($"[{traceId}] ERROR: {ex.Message}", "ERROR");
     }
 }
 
