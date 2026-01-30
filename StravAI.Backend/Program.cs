@@ -169,10 +169,11 @@ async Task ProcessActivityAsync(long activityId, IHttpClientFactory clientFactor
     var traceId = Guid.NewGuid().ToString().Substring(0, 5);
     try {
         using var client = clientFactory.CreateClient();
-        var token = await GetStravaAccessToken(client);
-        if (token == null) { AddLog($"[{traceId}] Auth Failure.", "ERROR"); return; }
+        var stravaToken = await GetStravaAccessToken(client);
+        if (stravaToken == null) { AddLog($"[{traceId}] Auth Failure.", "ERROR"); return; }
 
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        // 1. Fetch from Strava
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", stravaToken);
         var activity = await client.GetFromJsonAsync<JsonElement>($"https://www.strava.com/api/v3/activities/{activityId}");
         
         if (activity.GetProperty("type").GetString() != "Run") return;
@@ -182,6 +183,9 @@ async Task ProcessActivityAsync(long activityId, IHttpClientFactory clientFactor
 
         var historyRes = await client.GetAsync("https://www.strava.com/api/v3/athlete/activities?per_page=10");
         var historyJson = await historyRes.Content.ReadAsStringAsync();
+
+        // 2. Clear Strava Auth Header before calling Google (CRITICAL FIX)
+        client.DefaultRequestHeaders.Authorization = null;
 
         var prompt = $"Analyze this Strava run for a runner training for {GetEnv("GOAL_RACE_TYPE")} on {GetEnv("GOAL_RACE_DATE")}. Activity: {activity.GetRawText()}. History: {historyJson}. Provide a professional coaching summary, race readiness percentage, and a training prescription for the next workout. Use a encouraging but professional tone.";
         var geminiRequest = new { contents = new[] { new { parts = new[] { new { text = prompt } } } } };
@@ -202,9 +206,8 @@ async Task ProcessActivityAsync(long activityId, IHttpClientFactory clientFactor
 
         var geminiData = JsonSerializer.Deserialize<JsonElement>(geminiRaw);
         
-        // Safety check for Gemini response structure
         if (!geminiData.TryGetProperty("candidates", out var candidates) || candidates.GetArrayLength() == 0) {
-            AddLog($"[{traceId}] GEMINI_STRUCT_ERROR: No candidates in response. Content: {geminiRaw}", "ERROR");
+            AddLog($"[{traceId}] GEMINI_STRUCT_ERROR: No candidates in response.", "ERROR");
             return;
         }
 
@@ -216,6 +219,9 @@ async Task ProcessActivityAsync(long activityId, IHttpClientFactory clientFactor
         var border = "################################";
         var finalDesc = (string.IsNullOrEmpty(cleanDesc) ? "" : cleanDesc + "\n\n") + 
                         $"{border}\nStravAI Performance Report\n---\n{aiNotes}\n\nAnalyzed at: {timestampStr}\n*[StravAI-Processed]*\n{border}";
+
+        // 3. Re-apply Strava Auth Header for the update
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", stravaToken);
 
         var updateRes = await client.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{activityId}", new { 
             description = finalDesc
