@@ -190,14 +190,14 @@ const App: React.FC = () => {
   };
 
   const configCheckItems = useMemo(() => {
-    // Crucial: Use optional chaining to prevent crash if backendHealth is undefined or missing config
-    const config = backendHealth?.config;
+    // Highly defensive mapping to prevent 'undefined' crashes
+    const config = backendHealth && backendHealth.config ? backendHealth.config : null;
     return [
-        { label: 'GEMINI_API_KEY', status: !!config?.gemini_api_key },
-        { label: 'STRAVA_CLIENT_ID', status: !!config?.strava_client_id },
-        { label: 'STRAVA_CLIENT_SECRET', status: !!config?.strava_client_secret },
-        { label: 'STRAVA_REFRESH_TOKEN', status: !!config?.strava_refresh_token },
-        { label: 'STRAVA_VERIFY_TOKEN', status: !!config?.strava_verify_token }
+        { label: 'GEMINI_API_KEY', status: config ? !!config.gemini_api_key : false },
+        { label: 'STRAVA_CLIENT_ID', status: config ? !!config.strava_client_id : false },
+        { label: 'STRAVA_CLIENT_SECRET', status: config ? !!config.strava_client_secret : false },
+        { label: 'STRAVA_REFRESH_TOKEN', status: config ? !!config.strava_refresh_token : false },
+        { label: 'STRAVA_VERIFY_TOKEN', status: config ? !!config.strava_verify_token : false }
     ];
   }, [backendHealth]);
 
