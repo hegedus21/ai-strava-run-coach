@@ -48,7 +48,19 @@ app.Use(async (context, next) => {
 });
 
 app.MapGet("/", () => "StravAI Backend is fully operational.");
-app.MapGet("/health", () => Results.Ok(new { status = "healthy", time = DateTime.UtcNow }));
+
+app.MapGet("/health", () => Results.Ok(new { 
+    status = "healthy", 
+    time = DateTime.UtcNow,
+    config = new {
+        gemini_api_key = !string.IsNullOrEmpty(GetEnv("API_KEY")),
+        strava_client_id = !string.IsNullOrEmpty(GetEnv("STRAVA_CLIENT_ID")),
+        strava_client_secret = !string.IsNullOrEmpty(GetEnv("STRAVA_CLIENT_SECRET")),
+        strava_refresh_token = !string.IsNullOrEmpty(GetEnv("STRAVA_REFRESH_TOKEN")),
+        strava_verify_token = !string.IsNullOrEmpty(GetEnv("STRAVA_VERIFY_TOKEN"))
+    }
+}));
+
 app.MapGet("/logs", () => Results.Ok(logs.ToArray()));
 
 // Manual Sync Trigger
@@ -66,7 +78,7 @@ app.MapPost("/sync", (IHttpClientFactory clientFactory) => {
             var activities = await client.GetFromJsonAsync<List<JsonElement>>("https://www.strava.com/api/v3/athlete/activities?per_page=30");
             
             int processedCount = 0;
-            foreach (var act in activities ?? new()) {
+            foreach (var act in (activities ?? new())) {
                 if (!act.TryGetProperty("id", out var idProp)) continue;
                 var id = idProp.GetInt64();
                 var type = act.TryGetProperty("type", out var t) ? t.GetString() : "";
@@ -92,7 +104,8 @@ app.MapGet("/webhook/subscriptions", async (IHttpClientFactory clientFactory) =>
         string clientId = GetEnv("STRAVA_CLIENT_ID");
         string clientSecret = GetEnv("STRAVA_CLIENT_SECRET");
         var res = await client.GetAsync($"https://www.strava.com/api/v3/push_subscriptions?client_id={clientId}&client_secret={clientSecret}");
-        return Results.Content(await res.Content.ReadAsStringAsync(), "application/json");
+        var content = await res.Content.ReadAsStringAsync();
+        return Results.Content(content, "application/json");
     } catch (Exception ex) {
         return Results.Problem(ex.Message);
     }
@@ -184,7 +197,7 @@ async Task ProcessActivityAsync(long activityId, IHttpClientFactory clientFactor
         var historyRes = await client.GetAsync("https://www.strava.com/api/v3/athlete/activities?per_page=10");
         var historyJson = await historyRes.Content.ReadAsStringAsync();
 
-        // 2. Clear Strava Auth Header before calling Google (CRITICAL FIX)
+        // 2. Clear Strava Auth Header before calling Google
         client.DefaultRequestHeaders.Authorization = null;
 
         var prompt = $"Analyze this Strava run for a runner training for {GetEnv("GOAL_RACE_TYPE")} on {GetEnv("GOAL_RACE_DATE")}. Activity: {activity.GetRawText()}. History: {historyJson}. Provide a professional coaching summary, race readiness percentage, and a training prescription for the next workout. Use a encouraging but professional tone.";
