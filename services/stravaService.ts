@@ -43,9 +43,6 @@ export class StravaService {
     this.accessToken = data.access_token;
   }
 
-  /**
-   * Proxies subscription list through the backend to avoid CORS issues.
-   */
   async getSubscriptionsViaBackend(backendUrl: string): Promise<StravaSubscription[]> {
     const url = `${backendUrl.replace(/\/$/, '')}/webhook/subscriptions`;
     const response = await fetch(url);
@@ -56,9 +53,6 @@ export class StravaService {
     return response.json();
   }
 
-  /**
-   * Registers a webhook by proxying through the user's backend to avoid CORS and keep secrets safe.
-   */
   async createSubscriptionViaBackend(backendUrl: string, callbackUrl: string, verifyToken: string): Promise<any> {
     const url = `${backendUrl.replace(/\/$/, '')}/webhook/register`;
     const response = await fetch(url, {
@@ -74,13 +68,12 @@ export class StravaService {
     return response.json();
   }
 
-  async deleteSubscription(id: number): Promise<void> {
-    const clientId = typeof localStorage !== 'undefined' ? localStorage.getItem('strava_client_id') : process.env.STRAVA_CLIENT_ID;
-    const clientSecret = typeof localStorage !== 'undefined' ? localStorage.getItem('strava_client_secret') : process.env.STRAVA_CLIENT_SECRET;
-    
-    await fetch(`${this.API_BASE}/push_subscriptions/${id}?client_id=${clientId}&client_secret=${clientSecret}`, {
-      method: 'DELETE'
-    });
+  async deleteSubscriptionViaBackend(backendUrl: string, id: number): Promise<void> {
+    const url = `${backendUrl.replace(/\/$/, '')}/webhook/subscriptions/${id}`;
+    const response = await fetch(url, { method: 'DELETE' });
+    if (!response.ok) {
+        throw new Error("Failed to delete subscription via backend.");
+    }
   }
 
   async getRecentActivities(perPage: number = 10): Promise<StravaActivity[]> {
