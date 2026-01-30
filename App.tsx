@@ -16,7 +16,6 @@ interface BackendHealth {
 }
 
 const App: React.FC = () => {
-  const [token, setToken] = useState<string>(localStorage.getItem('strava_token') || '');
   const [clientId, setClientId] = useState<string>(localStorage.getItem('strava_client_id') || '');
   const [clientSecret, setClientSecret] = useState<string>(localStorage.getItem('strava_client_secret') || '');
   const [refreshToken, setRefreshToken] = useState<string>(localStorage.getItem('strava_refresh_token') || '');
@@ -59,12 +58,15 @@ const App: React.FC = () => {
       const res = await fetch(`${cleanUrl}/health`);
       if (res.ok) {
         setBackendStatus('ONLINE');
-        setBackendHealth(await res.json());
+        const healthData = await res.json();
+        setBackendHealth(healthData);
         
         const logsRes = await fetch(`${cleanUrl}/logs`);
         if (logsRes.ok) {
             const newLogs = await logsRes.json();
-            setBackendLogs(newLogs);
+            if (Array.isArray(newLogs)) {
+              setBackendLogs(newLogs);
+            }
         }
       } else {
         setBackendStatus('OFFLINE');
@@ -107,7 +109,11 @@ const App: React.FC = () => {
     if (!backendUrl || backendStatus !== 'ONLINE') return;
     try {
       const subs = await stravaService.getSubscriptionsViaBackend(backendUrl);
-      setSubscriptions(subs);
+      if (Array.isArray(subs)) {
+        setSubscriptions(subs);
+      } else {
+        setSubscriptions([]);
+      }
     } catch (err: any) {
       addLog(`Sync error: ${err.message}`, "error");
     }
@@ -190,7 +196,7 @@ const App: React.FC = () => {
             <div>
                 <h2 className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-4">Active_Subscriptions</h2>
                 <div className="space-y-2">
-                    {subscriptions.map(s => (
+                    {Array.isArray(subscriptions) && subscriptions.map(s => (
                         <div key={s.id} className="p-3 bg-slate-950 border border-slate-800 rounded text-[10px] group relative shadow-inner">
                             <div className="text-cyan-400 font-bold truncate pr-12">{s.callback_url}</div>
                             <div className="text-slate-600 mt-1">ID: {s.id}</div>
@@ -204,7 +210,7 @@ const App: React.FC = () => {
                             </div>
                         </div>
                     ))}
-                    {subscriptions.length === 0 && <div className="text-slate-700 italic text-[11px]">No active webhooks found.</div>}
+                    {(!Array.isArray(subscriptions) || subscriptions.length === 0) && <div className="text-slate-700 italic text-[11px]">No active webhooks found.</div>}
                 </div>
             </div>
         </div>
@@ -252,7 +258,7 @@ const App: React.FC = () => {
                             <button onClick={checkBackend} className="text-[10px] text-slate-600 hover:text-white uppercase font-bold transition-colors">Manual_Refresh</button>
                         </div>
                         <div ref={remoteLogsRef} className="flex-grow bg-slate-950 border border-slate-800 rounded-xl p-5 overflow-y-auto text-[11px] font-mono scroll-smooth shadow-inner bg-[radial-gradient(circle_at_bottom_right,_var(--tw-gradient-stops))] from-slate-900/40 to-transparent">
-                            {backendLogs.length === 0 ? (
+                            {!Array.isArray(backendLogs) || backendLogs.length === 0 ? (
                                 <div className="h-full flex items-center justify-center text-slate-800 italic">Connecting to remote log buffer...</div>
                             ) : (
                                 backendLogs.map((l, i) => {
