@@ -61,7 +61,6 @@ const App: React.FC = () => {
     }
 
     setIsChecking(true);
-    // Sanitize URL: strip trailing slash and ensure https if missing
     let cleanUrl = backendUrl.trim().replace(/\/$/, '');
     if (!cleanUrl.startsWith('http')) cleanUrl = 'https://' + cleanUrl;
 
@@ -87,16 +86,13 @@ const App: React.FC = () => {
         }
       } else {
         setBackendStatus('OFFLINE');
-        addLog(`Backend error: HTTP ${res.status} from ${cleanUrl}`, "error");
       }
     } catch (err: any) {
       setBackendStatus('OFFLINE');
-      const errorMsg = err.name === 'AbortError' ? 'Connection timed out' : err.message;
-      addLog(`Connectivity failure to ${cleanUrl}: ${errorMsg}`, "error");
     } finally {
       setIsChecking(false);
     }
-  }, [backendUrl, addLog]);
+  }, [backendUrl]);
 
   const handleTestPing = async () => {
     if (!backendUrl) return;
@@ -168,7 +164,6 @@ const App: React.FC = () => {
   }, [backendStatus, refreshSubscriptions]);
 
   const saveCredentials = () => {
-    // Sanitize URL before saving
     let cleanUrl = backendUrl.trim();
     if (cleanUrl && !cleanUrl.startsWith('http')) cleanUrl = 'https://' + cleanUrl;
     
@@ -193,6 +188,18 @@ const App: React.FC = () => {
       addLog(`Deletion failed: ${err.message}`, "error");
     }
   };
+
+  const configCheckItems = useMemo(() => {
+    // Crucial: Use optional chaining to prevent crash if backendHealth is undefined or missing config
+    const config = backendHealth?.config;
+    return [
+        { label: 'GEMINI_API_KEY', status: !!config?.gemini_api_key },
+        { label: 'STRAVA_CLIENT_ID', status: !!config?.strava_client_id },
+        { label: 'STRAVA_CLIENT_SECRET', status: !!config?.strava_client_secret },
+        { label: 'STRAVA_REFRESH_TOKEN', status: !!config?.strava_refresh_token },
+        { label: 'STRAVA_VERIFY_TOKEN', status: !!config?.strava_verify_token }
+    ];
+  }, [backendHealth]);
 
   return (
     <div className="flex flex-col h-screen bg-slate-950 text-slate-300 font-mono text-[13px]">
@@ -290,7 +297,6 @@ const App: React.FC = () => {
                 </div>
             ) : (
                 <div className="absolute inset-0 overflow-y-auto p-6 space-y-8">
-                {/* Config Verification Panel */}
                 <section className="bg-slate-900/80 border border-slate-800 rounded-xl p-6 shadow-lg">
                     <div className="flex items-center justify-between mb-6">
                         <h3 className="text-white text-xs font-bold uppercase tracking-wider flex items-center gap-2">
@@ -300,19 +306,13 @@ const App: React.FC = () => {
                         {backendStatus !== 'ONLINE' && <span className="text-[9px] text-red-500 font-bold animate-pulse">OFFLINE</span>}
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                        {[
-                            { label: 'GEMINI_API_KEY', status: backendHealth?.config.gemini_api_key },
-                            { label: 'STRAVA_CLIENT_ID', status: backendHealth?.config.strava_client_id },
-                            { label: 'STRAVA_CLIENT_SECRET', status: backendHealth?.config.strava_client_secret },
-                            { label: 'STRAVA_REFRESH_TOKEN', status: backendHealth?.config.strava_refresh_token },
-                            { label: 'STRAVA_VERIFY_TOKEN', status: backendHealth?.config.strava_verify_token }
-                        ].map(cfg => (
+                        {configCheckItems.map(cfg => (
                             <div key={cfg.label} className="flex items-center justify-between p-3 bg-slate-950 rounded border border-slate-800 group hover:border-slate-700 transition-colors">
                                 <span className="text-[10px] font-bold text-slate-500 group-hover:text-slate-400">{cfg.label}</span>
                                 {cfg.status ? (
                                     <span className="text-green-500 text-[10px] font-bold">✓ LOADED</span>
                                 ) : (
-                                    <span className="text-red-500 text-[10px] font-bold">✕ MISSING</span>
+                                    <span className="text-red-500 text-[10px] font-bold">{backendHealth ? '✕ MISSING' : '...'}</span>
                                 )}
                             </div>
                         ))}
@@ -394,7 +394,7 @@ const App: React.FC = () => {
                             </div>
                         ) : (
                             backendLogs.map((l, i) => {
-                                const isSuccess = l.includes("SUCCESS");
+                                const isSuccess = l.includes("SUCCESS") || l.includes("FINISHED");
                                 const isError = l.includes("ERROR") || l.includes("FAILURE");
                                 return (
                                     <div key={i} className={`py-0.5 border-b border-slate-900/50 ${isSuccess ? 'text-green-500' : isError ? 'text-red-400' : 'text-slate-500'}`}>
