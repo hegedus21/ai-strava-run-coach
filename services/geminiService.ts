@@ -19,11 +19,23 @@ export class GeminiCoachService {
     return new Promise(resolve => setTimeout(resolve, ms));
   }
 
+  /**
+   * Checks if an activity needs analysis based on its description.
+   * Skips if description contains "StravAI Report", "###", or "[StravAI-Processed]".
+   */
   static needsAnalysis(description: string | undefined): boolean {
-    if (!description) return true;
+    if (!description || description.trim() === "") return true;
+    
+    const hasReportTitle = description.includes("StravAI Report");
+    const hasBorder = description.includes("###");
     const hasSignature = description.includes(STRAVAI_SIGNATURE);
     const hasPlaceholder = description.includes(STRAVAI_PLACEHOLDER);
-    return !hasSignature || hasPlaceholder;
+
+    // If it has our markers but it's just a placeholder, we might want to re-analyze it
+    if (hasPlaceholder) return true;
+
+    // Skip if it contains our report indicators
+    return !(hasReportTitle || hasBorder || hasSignature);
   }
 
   async analyzeActivity(
@@ -34,8 +46,14 @@ export class GeminiCoachService {
     const maxRetries = 5;
     let attempt = 0;
 
+    // Use previous analyses in the context history to provide better continuity
     const historySummary = (list: StravaActivity[]) => list
-      .map(h => `- ${h.type} (${new Date(h.start_date).toLocaleDateString()}): ${(h.distance/1000).toFixed(2)}km, Pace: ${((h.moving_time/60)/(h.distance/1000)).toFixed(2)} min/km, HR: ${h.average_heartrate || '?'}`)
+      .map(h => {
+        const stats = `${h.type} (${new Date(h.start_date).toLocaleDateString()}): ${(h.distance/1000).toFixed(2)}km, Pace: ${((h.moving_time/60)/(h.distance/1000)).toFixed(2)} min/km, HR: ${h.average_heartrate || '?'}`;
+        // If the description has a previous analysis, we could try to extract a snippet, 
+        // but for now, we provide the raw metadata which is most reliable.
+        return `- ${stats}`;
+      })
       .join("\n");
 
     const now = new Date();
@@ -69,7 +87,7 @@ export class GeminiCoachService {
       TASK:
       1. Classify the workout type.
       2. Provide a summary analysis (2-3 sentences).
-      3. Assess current training trends vs goal.
+      3. Assess current training trends vs goal. Use the history provided to understand if the athlete is improving or needs more rest.
       4. Calculate Progress: Estimate goal readiness percentage (0-100%).
       5. Identify Next Week Focus: Based on recent volume/intensity, what should be the primary focus for the upcoming 7 days?
       6. Prescribe the immediate next workout.
@@ -134,18 +152,27 @@ export class GeminiCoachService {
   }
 
   private getCETTimestamp(): string {
-    const cetTime = new Date(new Date().getTime() + (1 * 60 * 60 * 1000));
-    return cetTime.toISOString().replace('T', ' ').substring(0, 19) + " CET";
+    // CET is UTC+1 (or UTC+2 in summer, but for simplicity we use a stable UTC+1 shift or Intl)
+    return new Intl.DateTimeFormat('en-GB', {
+      timeZone: 'Europe/Berlin',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false
+    }).format(new Date()) + " CET";
   }
 
   formatPlaceholder(): string {
     return `
 ${BORDER}
-Strava AI analysis
+StravAI Report
 ---
 ${STRAVAI_PLACEHOLDER}
 
-Analyzed at: ${this.getCETTimestamp()}
+Analysis created at: ${this.getCETTimestamp()}
 *${STRAVAI_SIGNATURE}*
 ${BORDER}
     `.trim();
@@ -167,7 +194,7 @@ StravAI Performance Report
 - **Target:** ${analysis.nextTrainingSuggestion.targetMetrics}
 - **Focus:** ${analysis.nextTrainingSuggestion.description}
 
-Analyzed at: ${this.getCETTimestamp()}
+Analysis created at: ${this.getCETTimestamp()}
 *${STRAVAI_SIGNATURE}*
 ${BORDER}
     `.trim();
