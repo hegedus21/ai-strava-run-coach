@@ -26,17 +26,15 @@ export class GeminiCoachService {
   static needsAnalysis(description: string | undefined): boolean {
     if (!description || description.trim() === "") return true;
     
-    const hasReport = description.includes("StravAI Report");
-    const hasBorder = description.includes("#");
-    const hasProcessedTag = description.includes(STRAVAI_SIGNATURE);
-    const hasPlaceholder = description.includes(STRAVAI_PLACEHOLDER);
-
-    // If it's just a placeholder from a failed quota, we SHOULD re-analyze it
-    if (hasPlaceholder) return true;
+    const lowerDesc = description.toLowerCase();
+    const hasReport = lowerDesc.includes("stravai report");
+    const hasProcessedTag = lowerDesc.includes(STRAVAI_SIGNATURE.toLowerCase());
+    
+    // Exception: If it's a placeholder, we definitely need to analyze it properly
+    if (lowerDesc.includes("activity will be analysed later")) return true;
 
     // Skip if it meets the criteria of a completed report
-    const alreadyDone = (hasReport && hasBorder) || hasProcessedTag;
-    return !alreadyDone;
+    return !(hasReport || hasProcessedTag);
   }
 
   async analyzeActivity(
@@ -47,17 +45,17 @@ export class GeminiCoachService {
     const maxRetries = 3;
     let attempt = 0;
 
-    // Helper to extract previous coaching insights to give the AI context
+    // Build a rich historical context for the AI
     const historySummary = (list: StravaActivity[]) => list
       .map(h => {
         const date = new Date(h.start_date).toLocaleDateString();
-        const stats = `${h.type} (${date}): ${(h.distance/1000).toFixed(2)}km, HR: ${h.average_heartrate || '?'}`;
+        const stats = `${h.type} (${date}): ${(h.distance/1000).toFixed(2)}km, Pace: ${((h.moving_time/60)/(h.distance/1000)).toFixed(2)}m/k, HR: ${h.average_heartrate || '?'}`;
         
         let prevInsights = "";
         if (h.description && h.description.includes("StravAI Report")) {
-          // Extract just the coach's summary from previous reports if available to show continuity
+          // Extract the summary to give the AI context of its own previous thoughts
           const match = h.description.match(/\*\*Coach's Summary:\*\*\n(.*?)\n/s);
-          if (match) prevInsights = ` | YOUR PREVIOUS ADVICE: ${match[1].substring(0, 120)}...`;
+          if (match) prevInsights = ` | PREV_ANALYSIS: ${match[1].substring(0, 150)}`;
         }
         
         return `- ${stats}${prevInsights}`;
@@ -70,23 +68,27 @@ export class GeminiCoachService {
     const daysRemaining = Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
 
     const prompt = `
-      ROLE: Professional Athletic Performance Coach.
-      ATHLETE GOAL: ${goals.raceType} on ${goals.raceDate} (Target: ${goals.goalTime}).
-      DAYS REMAINING: ${daysRemaining}.
+      ROLE: Elite Performance Running Coach (Personality: Analytical, Encouraging, Precise).
+      CONTEXT: Athlete is training for a ${goals.raceType} on ${goals.raceDate} (Target: ${goals.goalTime}).
+      T-MINUS: ${daysRemaining} days.
       
-      CURRENT SESSION:
+      CURRENT WORKOUT:
       - Name: ${activity.name}
       - Distance: ${(activity.distance / 1000).toFixed(2)} km
-      - Avg HR: ${activity.average_heartrate ?? 'N/A'}
+      - Moving Time: ${(activity.moving_time / 60).toFixed(1)} mins
+      - Avg HR: ${activity.average_heartrate ?? 'N/A'} bpm
+      - Max HR: ${activity.max_heartrate ?? 'N/A'} bpm
       
-      TRAINING CONTEXT (Recent History & Your Previous Advice):
-      ${historySummary(history.slice(0, 10))}
+      ATHLETE HISTORY & PREVIOUS ADVICE:
+      ${historySummary(history.slice(0, 12))}
 
       TASK:
-      1. Analyze the current run. 
-      2. If "YOUR PREVIOUS ADVICE" is present in history, acknowledge if the athlete followed it (e.g., "Great job following the easy pace advice from yesterday").
-      3. Provide a summary, readiness score, and specific next workout.
-      4. Output strictly in JSON format.
+      1. Analyze the performance relative to the goal race. 
+      2. If PREV_ANALYSIS is in history, evaluate if they followed that specific advice.
+      3. Identify strengths (Pros) and areas for improvement (Cons).
+      4. Provide a clear, actionable focus for the next 7 days.
+      5. Prescribe exactly ONE specific session for their next workout.
+      6. OUTPUT: Strictly JSON format.
     `;
 
     while (attempt < maxRetries) {
@@ -126,7 +128,7 @@ export class GeminiCoachService {
         });
 
         const text = response.text;
-        if (!text) throw new Error("Empty AI response");
+        if (!text) throw new Error("Empty AI result");
         const parsed = JSON.parse(text);
         return { ...parsed, daysRemaining };
       } catch (err: any) {
@@ -142,7 +144,7 @@ export class GeminiCoachService {
         throw err;
       }
     }
-    throw new Error("Analysis failed after retries.");
+    throw new Error("Coach unreachable.");
   }
 
   private getCETTimestamp(): string {
