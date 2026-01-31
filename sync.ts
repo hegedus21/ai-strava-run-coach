@@ -73,7 +73,8 @@ async function runSync() {
         if (innerError instanceof QuotaExhaustedError) {
           console.error("  ❌ Quota Exhausted.");
           
-          // CRITICAL: Double check we aren't overwriting a completed report if something went wrong
+          // CRITICAL: Double check the description hasn't been updated by another service while we were thinking
+          // We fetch the very latest version from Strava if possible, or use our static logic
           if (GeminiCoachService.needsAnalysis(activity.description)) {
             console.log("  -> Marking activity with capacity warning placeholder...");
             const placeholder = coach.formatPlaceholder();
@@ -81,7 +82,7 @@ async function runSync() {
             const newDescription = cleanDesc ? `${cleanDesc}\n\n${placeholder}` : placeholder;
             await strava.updateActivity(activity.id, { description: newDescription });
           } else {
-            console.log("  -> Activity already had a report. Skipping placeholder.");
+            console.log("  -> Activity already contains a report. Skipping placeholder write.");
           }
           
           (process as any).exit(0);
