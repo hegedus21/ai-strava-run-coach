@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using System.Net.Http.Headers;
 using System.Collections.Concurrent;
 using System.Text.Json;
+using System.Runtime.InteropServices;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -39,6 +40,18 @@ string GetEnv(string key) {
     return config[key] ?? "";
 }
 
+// Helper to get CET timestamp consistently
+string GetCetTimestamp() {
+    try {
+        var tzi = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) 
+            ? TimeZoneInfo.FindSystemTimeZoneById("Central European Standard Time") 
+            : TimeZoneInfo.FindSystemTimeZoneById("Europe/Berlin");
+        return TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, tzi).ToString("dd/MM/yyyy HH:mm:ss");
+    } catch {
+        return DateTime.UtcNow.AddHours(1).ToString("dd/MM/yyyy HH:mm:ss");
+    }
+}
+
 // Security Middleware
 app.Use(async (context, next) => {
     var path = context.Request.Path.Value?.ToLower() ?? "";
@@ -59,36 +72,38 @@ app.Use(async (context, next) => {
     await next();
 });
 
-app.MapGet("/", () => "StravAI Engine v1.3.3 (Smart Skip) is Online.");
+app.MapGet("/", () => "StravAI Engine v1.3.5 (Smart Logic) is Online.");
 
 app.MapGet("/health", () => Results.Ok(new { 
     status = "healthy", 
-    engine = "StravAI_Core_v1.3.3",
+    engine = "StravAI_Core_v1.3.5",
     config = new {
         gemini_ready = !string.IsNullOrEmpty(GetEnv("API_KEY")),
-        strava_ready = !string.IsNullOrEmpty(GetEnv("STRAVA_REFRESH_TOKEN")),
-        security_active = true
+        strava_ready = !string.IsNullOrEmpty(GetEnv("STRAVA_REFRESH_TOKEN"))
     }
 }));
 
 app.MapGet("/logs", () => Results.Ok(logs.ToArray()));
 
-// Helper to determine if an activity has already been processed by StravAI
+// Unified skip logic
 bool NeedsAnalysis(string? description) {
     if (string.IsNullOrWhiteSpace(description)) return true;
     
-    // Skip if it contains our report indicators: "StravAI Report", "###", or "[StravAI-Processed]"
+    // Skip if it contains our markers, OR the processed tag
     bool hasReport = description.Contains("StravAI Report");
-    bool hasBorder = description.Contains("###");
+    bool hasBorder = description.Contains("#");
     bool hasProcessedTag = description.Contains("[StravAI-Processed]");
+    
+    // Exception: If it's a placeholder, we WANT to analyze it properly
+    if (description.Contains("Activity will be analysed later")) return true;
 
-    return !(hasReport || hasBorder || hasProcessedTag);
+    return !((hasReport && hasBorder) || hasProcessedTag);
 }
 
-// Unified Sync Endpoint
+// Sync Handlers
 app.MapPost("/sync", (int? hours, IHttpClientFactory clientFactory) => {
-    var label = hours.HasValue ? $"{hours}H Window" : "Batch (Last 20)";
-    AddLog($"AUTH_ACTION: {label} Sync initiated.");
+    var label = hours.HasValue ? $"{hours}H Pulse" : "Deep Batch Sync";
+    AddLog($"AUTH_ACTION: {label} initiated.");
     
     _ = Task.Run(async () => {
         try {
@@ -97,8 +112,6 @@ app.MapPost("/sync", (int? hours, IHttpClientFactory clientFactory) => {
             if (string.IsNullOrEmpty(accessToken)) return;
 
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-            
-            // Build query
             string url = "https://www.strava.com/api/v3/athlete/activities?per_page=30";
             if (hours.HasValue) {
                 var afterTimestamp = DateTimeOffset.UtcNow.AddHours(-hours.Value).ToUnixTimeSeconds();
@@ -106,38 +119,26 @@ app.MapPost("/sync", (int? hours, IHttpClientFactory clientFactory) => {
             }
 
             var activities = await client.GetFromJsonAsync<List<JsonElement>>(url);
-            int count = 0;
+            int processed = 0;
             foreach (var act in (activities ?? new())) {
                 if (act.TryGetProperty("id", out var idProp) && act.GetProperty("type").GetString() == "Run") {
                     var desc = act.TryGetProperty("description", out var d) ? d.GetString() : "";
                     if (NeedsAnalysis(desc)) {
                         await ProcessActivityAsync(idProp.GetInt64(), clientFactory);
-                        count++;
+                        processed++;
                     }
                 }
             }
-            AddLog($"SYNC_COMPLETE: {label} sync finished. {count} activities processed.");
+            AddLog($"SYNC_COMPLETE: {label} finished. {processed} analyzed.");
         } catch (Exception ex) { AddLog($"SYNC_ERR: {ex.Message}", "ERROR"); }
     });
     return Results.Accepted();
 });
 
 app.MapPost("/sync/{id}", (long id, IHttpClientFactory clientFactory) => {
-    AddLog($"AUTH_ACTION: Targeted re-analysis for {id}.");
+    AddLog($"AUTH_ACTION: Re-analyzing activity {id}.");
     _ = Task.Run(() => ProcessActivityAsync(id, clientFactory));
     return Results.Accepted();
-});
-
-app.MapGet("/webhook/subscriptions", async (IHttpClientFactory clientFactory) => {
-    using var client = clientFactory.CreateClient();
-    var res = await client.GetAsync($"https://www.strava.com/api/v3/push_subscriptions?client_id={GetEnv("STRAVA_CLIENT_ID")}&client_secret={GetEnv("STRAVA_CLIENT_SECRET")}");
-    return Results.Content(await res.Content.ReadAsStringAsync(), "application/json");
-});
-
-app.MapDelete("/webhook/subscriptions/{id}", async (int id, IHttpClientFactory clientFactory) => {
-    using var client = clientFactory.CreateClient();
-    var res = await client.DeleteAsync($"https://www.strava.com/api/v3/push_subscriptions/{id}?client_id={GetEnv("STRAVA_CLIENT_ID")}&client_secret={GetEnv("STRAVA_CLIENT_SECRET")}");
-    return res.IsSuccessStatusCode ? Results.NoContent() : Results.Problem();
 });
 
 app.MapGet("/webhook", ([FromQuery(Name = "hub.mode")] string mode, [FromQuery(Name = "hub.challenge")] string challenge, [FromQuery(Name = "hub.verify_token")] string token) => 
@@ -177,21 +178,20 @@ async Task ProcessActivityAsync(long activityId, IHttpClientFactory clientFactor
         
         if (act.GetProperty("type").GetString() != "Run") return;
 
-        // Check if already processed one last time before AI call (useful for webhook races)
-        var currentDesc = act.TryGetProperty("description", out var d) ? d.GetString() : "";
-        if (!NeedsAnalysis(currentDesc)) {
-            AddLog($"[{tid}] SKIP: Activity {activityId} already analyzed.");
+        var desc = act.TryGetProperty("description", out var d) ? d.GetString() : "";
+        if (!NeedsAnalysis(desc)) {
+            AddLog($"[{tid}] SKIP: Activity {activityId} already contains analysis.");
             return;
         }
 
-        var hist = await (await client.GetAsync("https://www.strava.com/api/v3/athlete/activities?per_page=15")).Content.ReadAsStringAsync();
+        // Get history to provide context for Gemini
+        var hist = await (await client.GetAsync("https://www.strava.com/api/v3/athlete/activities?per_page=10")).Content.ReadAsStringAsync();
         client.DefaultRequestHeaders.Authorization = null;
 
         var prompt = $"Analyze Strava run for {GetEnv("GOAL_RACE_TYPE")} on {GetEnv("GOAL_RACE_DATE")}. " +
-                     $"Target Data: {act.GetRawText()}. Recent History context: {hist}. " +
-                     "Using the history context, assess if the athlete is improving or overtraining. " +
-                     "Provide a concise coach report with summary and training advice. " +
-                     "Keep it professional and encouraging.";
+                     $"Activity Data: {act.GetRawText()}. History context: {hist}. " +
+                     "Look for existing StravAI reports in the history context to provide a continuous coaching experience. " +
+                     "Output a professional, encouraging coach report (text only).";
 
         var apiKey = GetEnv("API_KEY");
         var geminiRes = await client.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={apiKey}", new { 
@@ -201,13 +201,12 @@ async Task ProcessActivityAsync(long activityId, IHttpClientFactory clientFactor
         var aiRes = await geminiRes.Content.ReadFromJsonAsync<JsonElement>();
         var aiText = aiRes.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString();
 
-        // Calculate CET Timestamp (roughly UTC+1)
-        var cetTime = DateTime.UtcNow.AddHours(1).ToString("yyyy-MM-dd HH:mm:ss");
-        var finalDesc = $"################################\nStravAI Report\n---\n{aiText}\n\nAnalysis created at: {cetTime} CET\n*[StravAI-Processed]*\n################################";
+        var timestamp = GetCetTimestamp();
+        var finalDesc = $"################################\nStravAI Report\n---\n{aiText}\n\nAnalysis created at: {timestamp} CET\n*[StravAI-Processed]*\n################################";
 
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         await client.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{activityId}", new { description = finalDesc });
-        AddLog($"[{tid}] SUCCESS: Activity {activityId} updated with coach insights.");
+        AddLog($"[{tid}] SUCCESS: Activity {activityId} updated.");
     } catch (Exception ex) { AddLog($"[{tid}] EXCEPTION: {ex.Message}", "ERROR"); }
 }
 
