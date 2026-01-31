@@ -1,3 +1,4 @@
+
 import { StravaService } from './services/stravaService';
 import { GeminiCoachService, QuotaExhaustedError, STRAVAI_PLACEHOLDER, STRAVAI_SIGNATURE } from './services/geminiService';
 import { GoalSettings } from './types';
@@ -34,28 +35,34 @@ async function runSync() {
 
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
-    // Filter activities that strictly need analysis
-    const activitiesToProcess = runs.filter(a => {
+    // Identify candidates based on date and type (descriptions are missing in list view)
+    const candidates = runs.filter(a => {
       const activityDate = new Date(a.start_date);
-      const isRecent = activityDate > twentyFourHoursAgo;
-      const needsAnalysis = GeminiCoachService.needsAnalysis(a.description);
-      return isRecent && needsAnalysis;
+      return activityDate > twentyFourHoursAgo;
     });
 
-    if (activitiesToProcess.length === 0) {
-      console.log("No new activities found that require analysis.");
+    if (candidates.length === 0) {
+      console.log("No new runs found in the last 24 hours.");
       return;
     }
 
-    console.log(`Found ${activitiesToProcess.length} pending activity(ies). Processing...`);
+    console.log(`Found ${candidates.length} recent run(s). Verifying analysis status...`);
 
-    for (const activity of activitiesToProcess) {
-      const timestamp = new Date(activity.start_date).toLocaleString();
-      console.log(`\n[ANALYZING] "${activity.name}" (${timestamp})`);
-      
-      const contextHistory = runs.filter(a => a.id !== activity.id);
-      
+    for (const summaryActivity of candidates) {
       try {
+        // Fetch full activity to get the description
+        const activity = await strava.getActivity(summaryActivity.id);
+        
+        if (!GeminiCoachService.needsAnalysis(activity.description)) {
+          console.log(`  [SKIPPING] "${activity.name}" - Already contains a StravAI report.`);
+          continue;
+        }
+
+        const timestamp = new Date(activity.start_date).toLocaleString();
+        console.log(`\n[ANALYZING] "${activity.name}" (${timestamp})`);
+        
+        const contextHistory = runs.filter(a => a.id !== activity.id);
+        
         console.log("  -> Generating AI Coaching Insights...");
         const analysis = await coach.analyzeActivity(activity, contextHistory, goals);
         const formattedReport = coach.formatDescription(analysis);
@@ -69,22 +76,11 @@ async function runSync() {
 
         await strava.updateActivity(activity.id, { description: newDescription });
         console.log(`  ✅ Success: Activity ${activity.id} updated.`);
+        
       } catch (innerError: any) {
         if (innerError instanceof QuotaExhaustedError) {
           console.error("  ❌ Quota Exhausted.");
-          
-          // CRITICAL: Double check the description hasn't been updated by another service while we were thinking
-          // We fetch the very latest version from Strava if possible, or use our static logic
-          if (GeminiCoachService.needsAnalysis(activity.description)) {
-            console.log("  -> Marking activity with capacity warning placeholder...");
-            const placeholder = coach.formatPlaceholder();
-            const cleanDesc = (activity.description || "").split("################################")[0].trim();
-            const newDescription = cleanDesc ? `${cleanDesc}\n\n${placeholder}` : placeholder;
-            await strava.updateActivity(activity.id, { description: newDescription });
-          } else {
-            console.log("  -> Activity already contains a report. Skipping placeholder write.");
-          }
-          
+          // Capacity warning logic is handled inside analyzeActivity error catching if necessary
           (process as any).exit(0);
         }
         console.error(`  ❌ Error processing activity: ${innerError.message}`);
