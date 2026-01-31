@@ -21,7 +21,7 @@ export class GeminiCoachService {
 
   /**
    * Determines if an activity needs analysis.
-   * Skips if it already contains a valid StravAI Report.
+   * Strictly skips if it already contains a valid StravAI Report.
    */
   static needsAnalysis(description: string | undefined): boolean {
     if (!description || description.trim() === "") return true;
@@ -31,7 +31,7 @@ export class GeminiCoachService {
     const hasProcessedTag = description.includes(STRAVAI_SIGNATURE);
     const hasPlaceholder = description.includes(STRAVAI_PLACEHOLDER);
 
-    // If it's just a placeholder, we definitely need to analyze it properly
+    // If it's just a placeholder from a failed quota, we SHOULD re-analyze it
     if (hasPlaceholder) return true;
 
     // Skip if it meets the criteria of a completed report
@@ -55,9 +55,9 @@ export class GeminiCoachService {
         
         let prevInsights = "";
         if (h.description && h.description.includes("StravAI Report")) {
-          // Extract just the coach's summary from previous reports if available
+          // Extract just the coach's summary from previous reports if available to show continuity
           const match = h.description.match(/\*\*Coach's Summary:\*\*\n(.*?)\n/s);
-          if (match) prevInsights = ` | PREV_ADVICE: ${match[1].substring(0, 100)}...`;
+          if (match) prevInsights = ` | YOUR PREVIOUS ADVICE: ${match[1].substring(0, 120)}...`;
         }
         
         return `- ${stats}${prevInsights}`;
@@ -71,7 +71,7 @@ export class GeminiCoachService {
 
     const prompt = `
       ROLE: Professional Athletic Performance Coach.
-      GOAL: ${goals.raceType} | DATE: ${goals.raceDate} | TARGET: ${goals.goalTime}.
+      ATHLETE GOAL: ${goals.raceType} on ${goals.raceDate} (Target: ${goals.goalTime}).
       DAYS REMAINING: ${daysRemaining}.
       
       CURRENT SESSION:
@@ -79,13 +79,13 @@ export class GeminiCoachService {
       - Distance: ${(activity.distance / 1000).toFixed(2)} km
       - Avg HR: ${activity.average_heartrate ?? 'N/A'}
       
-      TRAINING CONTEXT (Recent Activities & Your Previous Advice):
+      TRAINING CONTEXT (Recent History & Your Previous Advice):
       ${historySummary(history.slice(0, 10))}
 
       TASK:
       1. Analyze the current run. 
-      2. If "PREV_ADVICE" is present in history, check if the athlete followed it.
-      3. Provide a summary, readiness score, and next workout.
+      2. If "YOUR PREVIOUS ADVICE" is present in history, acknowledge if the athlete followed it (e.g., "Great job following the easy pace advice from yesterday").
+      3. Provide a summary, readiness score, and specific next workout.
       4. Output strictly in JSON format.
     `;
 
