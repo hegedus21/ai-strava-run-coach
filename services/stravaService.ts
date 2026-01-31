@@ -1,3 +1,4 @@
+
 import { StravaActivity, StravaUpdateParams } from "../types";
 
 export interface StravaSubscription {
@@ -82,6 +83,15 @@ export class StravaService {
       headers: { 'Authorization': `Bearer ${this.accessToken}` }
     });
     if (!response.ok) throw new Error("Strava API Error");
+    return response.json();
+  }
+
+  async getActivity(activityId: number): Promise<StravaActivity> {
+    if (!this.accessToken) await this.refreshAuth();
+    const response = await fetch(`${this.API_BASE}/activities/${activityId}`, {
+      headers: { 'Authorization': `Bearer ${this.accessToken}` }
+    });
+    if (!response.ok) throw new Error(`Failed to fetch activity ${activityId}`);
     return response.json();
   }
 
