@@ -24,7 +24,6 @@ async function runSync() {
     console.log(`Target: ${goals.raceType} | Goal Date: ${goals.raceDate}`);
     
     console.log("Fetching recent activities (Scan depth: 30)...");
-    // Ensure we use the correct method name from StravaService.ts
     const history = await strava.getRecentActivities(30);
     const runs = history.filter(a => a.type === 'Run');
 
@@ -35,6 +34,7 @@ async function runSync() {
 
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
+    // Filter activities that strictly need analysis
     const activitiesToProcess = runs.filter(a => {
       const activityDate = new Date(a.start_date);
       const isRecent = activityDate > twentyFourHoursAgo;
@@ -43,7 +43,7 @@ async function runSync() {
     });
 
     if (activitiesToProcess.length === 0) {
-      console.log("All recent activities are already processed or no new runs found in the last 24h.");
+      console.log("No new activities found that require analysis.");
       return;
     }
 
@@ -60,10 +60,9 @@ async function runSync() {
         const analysis = await coach.analyzeActivity(activity, contextHistory, goals);
         const formattedReport = coach.formatDescription(analysis);
 
-        // Keep existing user description, append AI report at the bottom
+        // Keep existing user text, remove previous StravAI blocks
         const cleanDesc = (activity.description || "")
           .split("################################")[0]
-          .split("---")[0] // Avoid double borders if previous analysis failed halfway
           .trim();
           
         const newDescription = cleanDesc ? `${cleanDesc}\n\n${formattedReport}` : formattedReport;
@@ -72,28 +71,28 @@ async function runSync() {
         console.log(`  ✅ Success: Activity ${activity.id} updated.`);
       } catch (innerError: any) {
         if (innerError instanceof QuotaExhaustedError) {
-          console.error("  ❌ CRITICAL: Gemini API Quota Exhausted.");
+          console.error("  ❌ Quota Exhausted.");
           
-          if (!activity.description?.includes(STRAVAI_SIGNATURE)) {
+          // CRITICAL: Double check we aren't overwriting a completed report if something went wrong
+          if (GeminiCoachService.needsAnalysis(activity.description)) {
             console.log("  -> Marking activity with capacity warning placeholder...");
-            const placeholderReport = coach.formatPlaceholder();
+            const placeholder = coach.formatPlaceholder();
             const cleanDesc = (activity.description || "").split("################################")[0].trim();
-            const newDescription = cleanDesc ? `${cleanDesc}\n\n${placeholderReport}` : placeholderReport;
+            const newDescription = cleanDesc ? `${cleanDesc}\n\n${placeholder}` : placeholder;
             await strava.updateActivity(activity.id, { description: newDescription });
+          } else {
+            console.log("  -> Activity already had a report. Skipping placeholder.");
           }
           
-          console.log("Stopping batch execution to prevent further errors.");
-          // Cast process to any to access exit() in Node.js environment
           (process as any).exit(0);
         }
-        console.error(`  ❌ Error processing ${activity.id}: ${innerError.message}`);
+        console.error(`  ❌ Error processing activity: ${innerError.message}`);
       }
     }
 
-    console.log(`\n--- Batch Sync Cycle Finished Successfully ---`);
+    console.log(`\n--- Batch Sync Cycle Finished ---`);
   } catch (error: any) {
-    console.error("CRITICAL ENGINE FAILURE:", error.message);
-    // Cast process to any to access exit() in Node.js environment
+    console.error("CRITICAL ENGINE ERROR:", error.message);
     (process as any).exit(1);
   }
 }
