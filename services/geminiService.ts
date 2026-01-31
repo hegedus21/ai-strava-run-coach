@@ -20,22 +20,23 @@ export class GeminiCoachService {
   }
 
   /**
-   * Checks if an activity needs analysis based on its description.
-   * Skips if description contains "StravAI Report", "###", or "[StravAI-Processed]".
+   * Determines if an activity needs analysis.
+   * Skips if it already contains a valid StravAI Report.
    */
   static needsAnalysis(description: string | undefined): boolean {
     if (!description || description.trim() === "") return true;
     
-    const hasReportTitle = description.includes("StravAI Report");
-    const hasBorder = description.includes("###");
-    const hasSignature = description.includes(STRAVAI_SIGNATURE);
+    const hasReport = description.includes("StravAI Report");
+    const hasBorder = description.includes("#");
+    const hasProcessedTag = description.includes(STRAVAI_SIGNATURE);
     const hasPlaceholder = description.includes(STRAVAI_PLACEHOLDER);
 
-    // If it has our markers but it's just a placeholder, we might want to re-analyze it
+    // If it's just a placeholder, we definitely need to analyze it properly
     if (hasPlaceholder) return true;
 
-    // Skip if it contains our report indicators
-    return !(hasReportTitle || hasBorder || hasSignature);
+    // Skip if it meets the criteria of a completed report
+    const alreadyDone = (hasReport && hasBorder) || hasProcessedTag;
+    return !alreadyDone;
   }
 
   async analyzeActivity(
@@ -43,16 +44,23 @@ export class GeminiCoachService {
     history: StravaActivity[], 
     goals: GoalSettings
   ): Promise<AIAnalysis> {
-    const maxRetries = 5;
+    const maxRetries = 3;
     let attempt = 0;
 
-    // Use previous analyses in the context history to provide better continuity
+    // Helper to extract previous coaching insights to give the AI context
     const historySummary = (list: StravaActivity[]) => list
       .map(h => {
-        const stats = `${h.type} (${new Date(h.start_date).toLocaleDateString()}): ${(h.distance/1000).toFixed(2)}km, Pace: ${((h.moving_time/60)/(h.distance/1000)).toFixed(2)} min/km, HR: ${h.average_heartrate || '?'}`;
-        // If the description has a previous analysis, we could try to extract a snippet, 
-        // but for now, we provide the raw metadata which is most reliable.
-        return `- ${stats}`;
+        const date = new Date(h.start_date).toLocaleDateString();
+        const stats = `${h.type} (${date}): ${(h.distance/1000).toFixed(2)}km, HR: ${h.average_heartrate || '?'}`;
+        
+        let prevInsights = "";
+        if (h.description && h.description.includes("StravAI Report")) {
+          // Extract just the coach's summary from previous reports if available
+          const match = h.description.match(/\*\*Coach's Summary:\*\*\n(.*?)\n/s);
+          if (match) prevInsights = ` | PREV_ADVICE: ${match[1].substring(0, 100)}...`;
+        }
+        
+        return `- ${stats}${prevInsights}`;
       })
       .join("\n");
 
@@ -61,38 +69,24 @@ export class GeminiCoachService {
     const diffTime = raceDate.getTime() - now.getTime();
     const daysRemaining = Math.max(0, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
 
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
-    
-    const recent30Days = history.filter(h => new Date(h.start_date) > thirtyDaysAgo);
-    const deepBaseline = history.slice(0, 50);
-
     const prompt = `
       ROLE: Professional Athletic Performance Coach.
-      ATHLETE GOAL: ${goals.raceType} on ${goals.raceDate} (Target: ${goals.goalTime}).
-      DAYS REMAINING UNTIL RACE: ${daysRemaining} days.
+      GOAL: ${goals.raceType} | DATE: ${goals.raceDate} | TARGET: ${goals.goalTime}.
+      DAYS REMAINING: ${daysRemaining}.
       
-      ANALYSIS TARGET (Current Activity):
+      CURRENT SESSION:
       - Name: ${activity.name}
       - Distance: ${(activity.distance / 1000).toFixed(2)} km
-      - Moving Time: ${(activity.moving_time / 60).toFixed(1)} mins
-      - Avg HR: ${activity.average_heartrate ?? 'N/A'} bpm
+      - Avg HR: ${activity.average_heartrate ?? 'N/A'}
       
-      CONTEXT A: RECENT TRENDS (Last 30 Days)
-      ${historySummary(recent30Days)}
-
-      CONTEXT B: DEEP BASELINE (Up to 1 Year / 50 Activities)
-      ${historySummary(deepBaseline)}
+      TRAINING CONTEXT (Recent Activities & Your Previous Advice):
+      ${historySummary(history.slice(0, 10))}
 
       TASK:
-      1. Classify the workout type.
-      2. Provide a summary analysis (2-3 sentences).
-      3. Assess current training trends vs goal. Use the history provided to understand if the athlete is improving or needs more rest.
-      4. Calculate Progress: Estimate goal readiness percentage (0-100%).
-      5. Identify Next Week Focus: Based on recent volume/intensity, what should be the primary focus for the upcoming 7 days?
-      6. Prescribe the immediate next workout.
-
-      OUTPUT: JSON only.
+      1. Analyze the current run. 
+      2. If "PREV_ADVICE" is present in history, check if the athlete followed it.
+      3. Provide a summary, readiness score, and next workout.
+      4. Output strictly in JSON format.
     `;
 
     while (attempt < maxRetries) {
@@ -132,7 +126,7 @@ export class GeminiCoachService {
         });
 
         const text = response.text;
-        if (!text) throw new Error("Empty response from Gemini");
+        if (!text) throw new Error("Empty AI response");
         const parsed = JSON.parse(text);
         return { ...parsed, daysRemaining };
       } catch (err: any) {
@@ -142,17 +136,16 @@ export class GeminiCoachService {
           throw new QuotaExhaustedError("Daily API Quota Exceeded.");
         }
         if (attempt < maxRetries) {
-          await this.sleep(Math.pow(2, attempt) * 1000);
+          await this.sleep(2000 * attempt);
           continue;
         }
         throw err;
       }
     }
-    throw new Error("Maximum retries reached for Gemini API.");
+    throw new Error("Analysis failed after retries.");
   }
 
   private getCETTimestamp(): string {
-    // CET is UTC+1 (or UTC+2 in summer, but for simplicity we use a stable UTC+1 shift or Intl)
     return new Intl.DateTimeFormat('en-GB', {
       timeZone: 'Europe/Berlin',
       year: 'numeric',
@@ -173,7 +166,7 @@ StravAI Report
 ${STRAVAI_PLACEHOLDER}
 
 Analysis created at: ${this.getCETTimestamp()}
-*${STRAVAI_SIGNATURE}*
+*${STRAVAI_SIGNATURE}-PENDING*
 ${BORDER}
     `.trim();
   }
@@ -181,7 +174,7 @@ ${BORDER}
   formatDescription(analysis: AIAnalysis): string {
     return `
 ${BORDER}
-StravAI Performance Report
+StravAI Report
 ---
 **Coach's Summary:**
 [${analysis.activityClassification}] ${analysis.summary}
