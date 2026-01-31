@@ -72,11 +72,11 @@ app.Use(async (context, next) => {
     await next();
 });
 
-app.MapGet("/", () => "StravAI Engine v1.3.7 (High Detail) is Online.");
+app.MapGet("/", () => "StravAI Engine v1.3.8 (Ultra Detail) is Online.");
 
 app.MapGet("/health", () => Results.Ok(new { 
     status = "healthy", 
-    engine = "StravAI_Core_v1.3.7",
+    engine = "StravAI_Core_v1.3.8",
     config = new {
         gemini_ready = !string.IsNullOrEmpty(GetEnv("API_KEY")),
         strava_ready = !string.IsNullOrEmpty(GetEnv("STRAVA_REFRESH_TOKEN"))
@@ -186,16 +186,25 @@ async Task ProcessActivityAsync(long activityId, IHttpClientFactory clientFactor
         var hist = await (await client.GetAsync("https://www.strava.com/api/v3/athlete/activities?per_page=12")).Content.ReadAsStringAsync();
         client.DefaultRequestHeaders.Authorization = null;
 
-        var prompt = $"ROLE: Elite Performance Running Coach. GOAL: {GetEnv("GOAL_RACE_TYPE")} on {GetEnv("GOAL_RACE_DATE")}.\n" +
+        var prompt = $"ROLE: Master Performance Running Coach. GOAL: {GetEnv("GOAL_RACE_TYPE")} on {GetEnv("GOAL_RACE_DATE")}.\n" +
                      $"TASK: Analyze the current activity: {act.GetRawText()}.\n" +
                      $"HISTORY: {hist}.\n" +
-                     "INSTRUCTIONS:\n" +
-                     "1. Provide a professional 'Coach's Summary' (one paragraph).\n" +
-                     "2. Evaluate Race Readiness percentage and T-Minus days.\n" +
-                     "3. Set the 'Next Week Focus'.\n" +
-                     "4. Prescribe a specific 'Next Training Step' (Workout, Target, Focus).\n" +
-                     "5. Look for previous StravAI reports in the history to show athlete progression.\n" +
-                     "Output the formatted report text only.";
+                     "OUTPUT STRUCTURE (STRICT MARKDOWN):\n" +
+                     "**Coach's Summary**\n" +
+                     "[One deep paragraph analyzing biomechanics (cadence), efficiency (Pace/HR), and execution].\n\n" +
+                     "**Race Readiness & Countdown**\n" +
+                     "* **Race Readiness:** [X]% [One sentence reasoning].\n" +
+                     "* **T-Minus:** [Days] Days\n\n" +
+                     "**Next Week Focus: [Topic Name]**\n" +
+                     "[One paragraph on the specific physiological block needed next].\n\n" +
+                     "**Next Training Step**\n" +
+                     "* **Workout:** [Session Title]\n" +
+                     "* **Target:** [Pace, HR, and Power targets]\n" +
+                     "* **Focus:** [Specific coaching cue or nutrition advice].\n\n" +
+                     "**Progression Note**\n" +
+                     "[Compare today's data (Pace-to-HR ratio) with a specific date in history. Use analytical terms like 'structural integrity' or 'aerobic decoupling'].\n\n" +
+                     "TONE: Highly professional, analytical, and data-driven.\n" +
+                     "INSTRUCTION: Return ONLY the formatted markdown text.";
 
         var apiKey = GetEnv("API_KEY");
         var geminiRes = await client.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={apiKey}", new { 
@@ -210,7 +219,7 @@ async Task ProcessActivityAsync(long activityId, IHttpClientFactory clientFactor
 
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         await client.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{activityId}", new { description = finalDesc });
-        AddLog($"[{tid}] SUCCESS: Detailed report written to {activityId}.");
+        AddLog($"[{tid}] SUCCESS: High-fidelity report written to {activityId}.");
     } catch (Exception ex) { AddLog($"[{tid}] EXCEPTION: {ex.Message}", "ERROR"); }
 }
 
