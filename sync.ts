@@ -1,9 +1,13 @@
 import { StravaService } from './services/stravaService';
-import { GeminiCoachService, QuotaExhaustedError, STRAVAI_PLACEHOLDER } from './services/geminiService';
-import { GoalSettings, StravaActivity } from './types';
+import { GeminiCoachService, QuotaExhaustedError, STRAVAI_PLACEHOLDER, STRAVAI_SIGNATURE } from './services/geminiService';
+import { GoalSettings } from './types';
 
+/**
+ * Headless Sync Script
+ * Runs via GitHub Actions to process activities from the last 24 hours.
+ */
 async function runSync() {
-  console.log("--- Starting StravAI Daily Batch Sync ---");
+  console.log("--- StravAI Cloud Engine: Scheduled Batch Sync ---");
   
   const goals: GoalSettings = {
     raceType: process.env.GOAL_RACE_TYPE || "Marathon",
@@ -15,15 +19,17 @@ async function runSync() {
   const coach = new GeminiCoachService();
 
   try {
+    console.log("Authenticating with Strava...");
     await strava.refreshAuth();
-    console.log(`Target Goal: ${goals.raceType} | Date: ${goals.raceDate}`);
+    console.log(`Target: ${goals.raceType} | Goal Date: ${goals.raceDate}`);
     
-    console.log("Scanning recent history...");
-    const history = await strava.getHistoryForBaseline(30);
+    console.log("Fetching recent activities (Scan depth: 30)...");
+    // Ensure we use the correct method name from StravaService.ts
+    const history = await strava.getRecentActivities(30);
     const runs = history.filter(a => a.type === 'Run');
 
     if (runs.length === 0) {
-      console.log("No runs found in recent history.");
+      console.log("No running activities found in recent history.");
       return;
     }
 
@@ -32,53 +38,62 @@ async function runSync() {
     const activitiesToProcess = runs.filter(a => {
       const activityDate = new Date(a.start_date);
       const isRecent = activityDate > twentyFourHoursAgo;
-      return isRecent && GeminiCoachService.needsAnalysis(a.description);
+      const needsAnalysis = GeminiCoachService.needsAnalysis(a.description);
+      return isRecent && needsAnalysis;
     });
 
     if (activitiesToProcess.length === 0) {
-      console.log("No new or pending activities found from the last 24 hours.");
+      console.log("All recent activities are already processed or no new runs found in the last 24h.");
       return;
     }
 
-    console.log(`Found ${activitiesToProcess.length} activity(ies) to process/retry.`);
+    console.log(`Found ${activitiesToProcess.length} pending activity(ies). Processing...`);
 
     for (const activity of activitiesToProcess) {
-      console.log(`\nProcessing: "${activity.name}" (${new Date(activity.start_date).toLocaleString()})`);
+      const timestamp = new Date(activity.start_date).toLocaleString();
+      console.log(`\n[ANALYZING] "${activity.name}" (${timestamp})`);
+      
       const contextHistory = runs.filter(a => a.id !== activity.id);
       
       try {
-        console.log("Consulting Coach Gemini...");
+        console.log("  -> Generating AI Coaching Insights...");
         const analysis = await coach.analyzeActivity(activity, contextHistory, goals);
         const formattedReport = coach.formatDescription(analysis);
 
-        const cleanDesc = (activity.description || "").split("################################")[0].trim();
-        const newDescription = `${cleanDesc}\n\n${formattedReport}`;
+        // Keep existing user description, append AI report at the bottom
+        const cleanDesc = (activity.description || "")
+          .split("################################")[0]
+          .split("---")[0] // Avoid double borders if previous analysis failed halfway
+          .trim();
+          
+        const newDescription = cleanDesc ? `${cleanDesc}\n\n${formattedReport}` : formattedReport;
 
         await strava.updateActivity(activity.id, { description: newDescription });
-        console.log(`✅ Success: Activity ${activity.id} updated with real analysis.`);
+        console.log(`  ✅ Success: Activity ${activity.id} updated.`);
       } catch (innerError: any) {
         if (innerError instanceof QuotaExhaustedError) {
-          console.error("CRITICAL: Gemini Free Tier Quota Exhausted.");
+          console.error("  ❌ CRITICAL: Gemini API Quota Exhausted.");
           
-          if (!activity.description?.includes(STRAVAI_PLACEHOLDER)) {
-            console.log("Adding placeholder to activity description...");
+          if (!activity.description?.includes(STRAVAI_SIGNATURE)) {
+            console.log("  -> Marking activity with capacity warning placeholder...");
             const placeholderReport = coach.formatPlaceholder();
             const cleanDesc = (activity.description || "").split("################################")[0].trim();
-            const newDescription = `${cleanDesc}\n\n${placeholderReport}`;
+            const newDescription = cleanDesc ? `${cleanDesc}\n\n${placeholderReport}` : placeholderReport;
             await strava.updateActivity(activity.id, { description: newDescription });
-            console.log(`Activity ${activity.id} marked with capacity warning.`);
           }
           
-          console.log("Aborting current batch sync.");
+          console.log("Stopping batch execution to prevent further errors.");
+          // Cast process to any to access exit() in Node.js environment
           (process as any).exit(0);
         }
-        console.error(`Failed to analyze activity ${activity.id}: ${innerError.message}`);
+        console.error(`  ❌ Error processing ${activity.id}: ${innerError.message}`);
       }
     }
 
-    console.log(`\n--- Batch Sync Cycle Complete ---`);
-  } catch (error) {
-    console.error("Critical Sync Failure:", error);
+    console.log(`\n--- Batch Sync Cycle Finished Successfully ---`);
+  } catch (error: any) {
+    console.error("CRITICAL ENGINE FAILURE:", error.message);
+    // Cast process to any to access exit() in Node.js environment
     (process as any).exit(1);
   }
 }
