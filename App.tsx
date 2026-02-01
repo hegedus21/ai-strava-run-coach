@@ -52,13 +52,12 @@ const QuotaMeter = ({ quota }: { quota: QuotaStatus }) => {
 
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-6 relative overflow-hidden">
-      {/* Background decoration */}
       <div className="absolute top-0 right-0 w-32 h-32 bg-cyan-500/5 blur-3xl rounded-full -mr-16 -mt-16 pointer-events-none" />
 
       <div className="flex justify-between items-start relative">
         <div>
           <h3 className="text-white font-black uppercase text-xs">Intelligence_Fuel_Gauge</h3>
-          <p className="text-[9px] text-slate-500 font-bold mt-0.5">GEMINI 2.0 FLASH (FREE TIER)</p>
+          <p className="text-[9px] text-slate-500 font-bold mt-0.5 tracking-tight">GEMINI 2.0 FLASH • FREE TIER</p>
         </div>
         <div className={`px-2 py-0.5 rounded text-[8px] font-black uppercase ${quota.dailyUsed < quota.dailyLimit * 0.9 ? 'bg-cyan-500/20 text-cyan-400' : 'bg-red-500/20 text-red-400'}`}>
           {quota.dailyUsed < quota.dailyLimit * 0.9 ? 'SYSTEMS_OPTIMAL' : 'CAPACITY_CRITICAL'}
@@ -66,7 +65,6 @@ const QuotaMeter = ({ quota }: { quota: QuotaStatus }) => {
       </div>
 
       <div className="space-y-5">
-        {/* Daily Meter */}
         <div className="space-y-1.5">
           <div className="flex justify-between text-[9px] font-bold uppercase tracking-widest">
             <span className="text-slate-500">Daily_Credits_Remaining</span>
@@ -77,7 +75,6 @@ const QuotaMeter = ({ quota }: { quota: QuotaStatus }) => {
           </div>
         </div>
 
-        {/* Burst Meter */}
         <div className="space-y-1.5">
           <div className="flex justify-between text-[9px] font-bold uppercase tracking-widest">
             <span className="text-slate-500">Minute_Burst_Capacity</span>
@@ -102,10 +99,16 @@ const QuotaMeter = ({ quota }: { quota: QuotaStatus }) => {
         </div>
       </div>
 
-      {/* Helper Info */}
-      <div className="text-[8px] font-bold text-slate-600 uppercase tracking-widest pt-2 flex justify-between">
-        <span>Cost: 1 analysis = 1 unit</span>
-        <span>Est. resets daily @ 00:00 UTC</span>
+      <div className="bg-slate-950/50 p-3 rounded-lg border border-slate-800/50 space-y-2">
+        <p className="text-[8px] font-black text-slate-600 uppercase tracking-widest border-b border-slate-800/50 pb-1">Cost_Logic_Legend</p>
+        <div className="flex justify-between text-[8px] font-bold text-slate-500 uppercase">
+          <span>Manual_Audit</span>
+          <span className="text-amber-500">~15 Units</span>
+        </div>
+        <div className="flex justify-between text-[8px] font-bold text-slate-500 uppercase">
+          <span>Webhook_Sync</span>
+          <span className="text-cyan-500">1 Unit</span>
+        </div>
       </div>
     </div>
   );
@@ -180,7 +183,7 @@ const App: React.FC = () => {
         <div className="flex items-center gap-4">
           <StravAILogo className="w-9 h-9" />
           <div>
-            <h1 className="text-white font-black tracking-tighter uppercase text-sm">StravAI_Command_Center <span className="text-slate-500 border border-slate-700 px-1 rounded ml-1">v1.6.2</span></h1>
+            <h1 className="text-white font-black tracking-tighter uppercase text-sm">StravAI_Command_Center <span className="text-slate-500 border border-slate-700 px-1 rounded ml-1">v1.6.3</span></h1>
             <div className={`flex items-center gap-2 text-[9px] uppercase font-bold mt-0.5 ${backendStatus === 'ONLINE' ? 'text-cyan-400' : 'text-red-500'}`}>
               <span className={`w-1.5 h-1.5 rounded-full ${backendStatus === 'ONLINE' ? 'bg-cyan-400' : 'bg-red-500'}`}></span>
               {backendStatus}
@@ -196,10 +199,10 @@ const App: React.FC = () => {
               <h2 className="text-[9px] font-black text-slate-600 uppercase tracking-widest mb-4">Core_Actions</h2>
               <button 
                 onClick={handleAudit} 
-                disabled={isProcessing || backendStatus !== 'ONLINE' || (profile?.quota.dailyUsed || 0) > 1495}
+                disabled={isProcessing || backendStatus !== 'ONLINE' || (profile?.quota.dailyUsed || 0) > 1485}
                 className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-amber-400 rounded border border-amber-500/20 font-bold uppercase text-[10px] transition-all disabled:opacity-50"
               >
-                {isProcessing ? 'Processing...' : (profile?.quota.dailyUsed || 0) > 1495 ? 'Fuel_Empty' : 'Trigger_Full_Audit'}
+                {isProcessing ? 'Processing...' : (profile?.quota.dailyUsed || 0) > 1485 ? 'Fuel_Empty' : 'Trigger_Full_Audit'}
               </button>
             </section>
         </aside>
@@ -208,7 +211,6 @@ const App: React.FC = () => {
           <div className="flex-grow overflow-y-auto p-6 space-y-8 pb-20 scroll-smooth custom-scroll">
             {profile ? (
               <div className="max-w-5xl space-y-8">
-                {/* System Header */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
                    <QuotaMeter quota={profile.quota} />
                    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 relative overflow-hidden group">
@@ -216,14 +218,13 @@ const App: React.FC = () => {
                          <StravAILogo className="w-20 h-20" />
                       </div>
                       <h3 className="text-cyan-400 font-black uppercase text-xs mb-4">Coach's_Active_Strategy</h3>
-                      <p className="text-slate-400 leading-relaxed text-[11px] h-24 overflow-y-auto pr-2 custom-scroll">{profile.summary}</p>
+                      <p className="text-slate-400 leading-relaxed text-[11px] h-32 overflow-y-auto pr-2 custom-scroll">{profile.summary}</p>
                       <div className="mt-4 pt-4 border-t border-slate-800 italic text-slate-500 text-[10px]">
                          "{profile.coachNotes}"
                       </div>
                    </div>
                 </div>
 
-                {/* Intensity Matrix */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                   <div className="bg-slate-900/50 p-6 border border-slate-800 rounded-2xl space-y-4">
                     <ZoneBar zones={profile.periodic.week.zones} label="Current_Week_Intensity" />
@@ -254,7 +255,6 @@ const App: React.FC = () => {
                   </div>
                 </div>
 
-                {/* Yearly Archive */}
                 <section className="space-y-4">
                    <h3 className="text-white font-black uppercase text-xs tracking-widest">Physiological_Career_Log</h3>
                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
