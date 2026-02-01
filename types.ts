@@ -1,3 +1,4 @@
+
 export interface StravaActivity {
   id: number;
   name: string;
@@ -18,6 +19,80 @@ export interface GoalSettings {
   raceType: string;
   raceDate: string;
   goalTime: string;
+}
+
+export interface HeartRateZones {
+  z1: number; // Percentage 0-100
+  z2: number;
+  z3: number;
+  z4: number;
+  z5: number;
+}
+
+export interface QuotaStatus {
+  dailyUsed: number;
+  dailyLimit: number;
+  minuteUsed: number;
+  minuteLimit: number;
+  resetAt: string; // ISO string for estimated reset
+}
+
+export interface PeriodicStat {
+  distanceKm: number;
+  durationMins: number;
+  count: number;
+  zones: HeartRateZones;
+}
+
+export interface YearlyStat {
+  year: number;
+  distanceKm: number;
+  durationHours: number;
+  activityCount: number;
+  zones: HeartRateZones;
+}
+
+export interface AthleteProfile {
+  lastUpdated: string;
+  summary: string;
+  quota: QuotaStatus;
+  stats: {
+    marathons: number;
+    halfMarathons: number;
+    ironmans: number;
+    seventyThrees: number;
+    ultras: number;
+    totalRuns: number;
+    totalDistanceKm: number;
+  };
+  milestones: {
+    fiveK: number;
+    tenK: number;
+    twentyK: number;
+    halfMarathon: number;
+    thirtyK: number;
+    marathon: number;
+    ultra: number;
+  };
+  periodic: {
+    week: PeriodicStat;
+    month: PeriodicStat;
+    year: PeriodicStat;
+  };
+  yearlyHistory: YearlyStat[];
+  triathlon: {
+    sprint: number;
+    olympic: number;
+    halfIronman: number;
+    ironman: number;
+  };
+  pbs: {
+    fiveK?: string;
+    tenK?: string;
+    halfMarathon?: string;
+    marathon?: string;
+  };
+  coachNotes: string;
 }
 
 export interface AIAnalysis {

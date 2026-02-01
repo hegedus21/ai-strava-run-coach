@@ -1,14 +1,14 @@
 
 import { StravaService } from './services/stravaService';
 import { GeminiCoachService, QuotaExhaustedError, STRAVAI_PLACEHOLDER, STRAVAI_SIGNATURE } from './services/geminiService';
-import { GoalSettings } from './types';
+import { GoalSettings, AthleteProfile, QuotaStatus } from './types';
 
 /**
  * Headless Sync Script
- * Runs via GitHub Actions to process activities from the last 24 hours.
+ * Runs via GitHub Actions to process activities and update the Athlete Profile.
  */
 async function runSync() {
-  console.log("--- StravAI Cloud Engine: Scheduled Batch Sync ---");
+  console.log("--- StravAI Cloud Engine: Quota-Aware Batch Sync ---");
   
   const goals: GoalSettings = {
     raceType: process.env.GOAL_RACE_TYPE || "Marathon",
@@ -22,69 +22,94 @@ async function runSync() {
   try {
     console.log("Authenticating with Strava...");
     await strava.refreshAuth();
-    console.log(`Target: ${goals.raceType} | Goal Date: ${goals.raceDate}`);
     
-    console.log("Fetching recent activities (Scan depth: 30)...");
-    const history = await strava.getRecentActivities(30);
-    const runs = history.filter(a => a.type === 'Run');
+    // --- STEP 1: Fetch the Athlete Profile & Quota ---
+    console.log("Locating System Cache...");
+    const recent = await strava.getRecentActivities(50);
+    const cacheActivitySummary = recent.find(a => a.name === "[StravAI] System Cache");
+    
+    let cacheActivity: any = null;
+    let quota: QuotaStatus = { dailyUsed: 0, dailyLimit: 1500, minuteUsed: 0, minuteLimit: 15, resetAt: new Date(Date.now() + 86400000).toISOString() };
 
-    if (runs.length === 0) {
-      console.log("No running activities found in recent history.");
+    if (cacheActivitySummary) {
+      cacheActivity = await strava.getActivity(cacheActivitySummary.id);
+      const desc = cacheActivity.description || "";
+      
+      // Parse Quota
+      if (desc.includes("---QUOTA_START---")) {
+        const qStr = desc.split("---QUOTA_START---")[1].split("---QUOTA_END---")[0];
+        quota = JSON.parse(qStr);
+        // Reset check
+        if (new Date() > new Date(quota.resetAt)) {
+          quota.dailyUsed = 0;
+          quota.resetAt = new Date(Date.now() + 86400000).toISOString();
+        }
+      }
+    }
+
+    if (quota.dailyUsed >= 1495) {
+      console.warn("⚠️ API Quota nearly exhausted. Stopping headless sync to preserve manual audit capacity.");
       return;
     }
 
+    console.log("Fetching recent activities for analysis...");
+    const runs = recent.filter(a => a.type === 'Run');
     const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-
-    // Identify candidates based on date and type (descriptions are missing in list view)
-    const candidates = runs.filter(a => {
-      const activityDate = new Date(a.start_date);
-      return activityDate > twentyFourHoursAgo;
-    });
+    const candidates = runs.filter(a => new Date(a.start_date) > twentyFourHoursAgo);
 
     if (candidates.length === 0) {
       console.log("No new runs found in the last 24 hours.");
       return;
     }
 
-    console.log(`Found ${candidates.length} recent run(s). Verifying analysis status...`);
-
     for (const summaryActivity of candidates) {
       try {
-        // Fetch full activity to get the description
         const activity = await strava.getActivity(summaryActivity.id);
         
         if (!GeminiCoachService.needsAnalysis(activity.description)) {
-          console.log(`  [SKIPPING] "${activity.name}" - Already contains a StravAI report.`);
+          console.log(`  [SKIPPING] "${activity.name}" - Already processed.`);
           continue;
         }
 
-        const timestamp = new Date(activity.start_date).toLocaleString();
-        console.log(`\n[ANALYZING] "${activity.name}" (${timestamp})`);
+        if (quota.dailyUsed >= 1500) break;
+
+        console.log(`\n[ANALYZING] "${activity.name}" (Used: ${quota.dailyUsed}/${quota.dailyLimit})`);
         
-        const contextHistory = runs.filter(a => a.id !== activity.id);
-        
-        console.log("  -> Generating AI Coaching Insights...");
-        const analysis = await coach.analyzeActivity(activity, contextHistory, goals);
+        const analysis = await coach.analyzeActivity(activity, runs.filter(r => r.id !== activity.id), goals);
         const formattedReport = coach.formatDescription(analysis);
 
-        // Keep existing user text, remove previous StravAI blocks
-        const cleanDesc = (activity.description || "")
-          .split("################################")[0]
-          .trim();
-          
+        const cleanDesc = (activity.description || "").split("################################")[0].trim();
         const newDescription = cleanDesc ? `${cleanDesc}\n\n${formattedReport}` : formattedReport;
 
         await strava.updateActivity(activity.id, { description: newDescription });
-        console.log(`  ✅ Success: Activity ${activity.id} updated.`);
+        console.log(`  ✅ Success: Activity updated.`);
+        
+        // Update Quota
+        quota.dailyUsed++;
         
       } catch (innerError: any) {
         if (innerError instanceof QuotaExhaustedError) {
-          console.error("  ❌ Quota Exhausted.");
-          // Capacity warning logic is handled inside analyzeActivity error catching if necessary
-          (process as any).exit(0);
+          console.error("  ❌ API Quota Exhausted.");
+          break;
         }
         console.error(`  ❌ Error processing activity: ${innerError.message}`);
       }
+    }
+
+    // --- STEP 2: Save Updated Quota to Cache ---
+    if (cacheActivity) {
+      const desc = cacheActivity.description || "";
+      const newQuotaStr = `---QUOTA_START---\n${JSON.stringify(quota)}\n---QUOTA_END---`;
+      let finalDesc = desc;
+      if (desc.includes("---QUOTA_START---")) {
+        const parts = desc.split("---QUOTA_START---");
+        const postParts = parts[1].split("---QUOTA_END---");
+        finalDesc = parts[0] + newQuotaStr + postParts[1];
+      } else {
+        finalDesc += "\n" + newQuotaStr;
+      }
+      await strava.updateActivity(cacheActivity.id, { description: finalDesc });
+      console.log(`\n📊 System Quota Updated: ${quota.dailyUsed} calls used today.`);
     }
 
     console.log(`\n--- Batch Sync Cycle Finished ---`);

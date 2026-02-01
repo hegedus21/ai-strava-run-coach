@@ -1,8 +1,9 @@
+
 name: Deploy Web UI
 
 on:
   push:
-    branches: ["main"]
+    branches: ["main", "feature/*"]
   workflow_dispatch:
 
 permissions:
@@ -16,6 +17,8 @@ concurrency:
 
 jobs:
   build-and-deploy:
+    # Only use the github-pages environment on the main branch
+    # This prevents the 'environment protection rules' error on feature branches
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
@@ -44,5 +47,7 @@ jobs:
           path: './dist'
 
       - name: Deploy to GitHub Pages
+        # Only perform the actual deployment step on the main branch
+        if: github.ref == 'refs/heads/main'
         id: deployment
         uses: actions/deploy-pages@v4
