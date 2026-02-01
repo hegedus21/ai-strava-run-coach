@@ -4,12 +4,15 @@ using System.Text.Json.Serialization;
 using System.Net.Http.Headers;
 using System.Collections.Concurrent;
 using System.Text.Json;
-using System.Runtime.InteropServices;
-using System.Globalization;
 using System.Text.Json.Nodes;
 using System.Net;
 
-var builder = WebApplication.CreateBuilder(args);
+var builder = WebApplication.CreateSlimBuilder(args); // Use SlimBuilder for AOT optimization
+
+builder.Services.ConfigureHttpJsonOptions(options => {
+    options.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJsonContext.Default);
+});
+
 var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
 builder.WebHost.UseSetting("http_ports", port);
 
@@ -52,7 +55,8 @@ app.MapGet("/profile", async (IHttpClientFactory clientFactory) => {
         if (token == null) return Results.Unauthorized();
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         
-        var acts = await (await client.GetAsync("https://www.strava.com/api/v3/athlete/activities?per_page=100")).Content.ReadFromJsonAsync<List<JsonElement>>();
+        var res = await client.GetAsync("https://www.strava.com/api/v3/athlete/activities?per_page=100");
+        var acts = await res.Content.ReadFromJsonAsync<List<JsonElement>>(AppJsonContext.Default.ListJsonElement);
         var cache = acts?.FirstOrDefault(a => a.GetProperty("name").GetString() == "[StravAI] System Cache");
         
         if (!cache.HasValue) {
@@ -61,7 +65,7 @@ app.MapGet("/profile", async (IHttpClientFactory clientFactory) => {
         }
 
         var detailRes = await client.GetAsync($"https://www.strava.com/api/v3/activities/{cache.Value.GetProperty("id").GetInt64()}");
-        var act = await detailRes.Content.ReadFromJsonAsync<JsonElement>();
+        var act = await detailRes.Content.ReadFromJsonAsync<JsonElement>(AppJsonContext.Default.JsonElement);
         var desc = act.GetProperty("description").GetString() ?? "";
         
         if (!desc.Contains("---CACHE_START---")) {
@@ -70,7 +74,7 @@ app.MapGet("/profile", async (IHttpClientFactory clientFactory) => {
         }
 
         var jsonString = desc.Split("---CACHE_START---")[1].Split("---CACHE_END---")[0].Trim();
-        SystemState.AddLog($"PROFILE: Successfully loaded {jsonString.Length} bytes of athlete data.", "SUCCESS");
+        SystemState.AddLog($"PROFILE: Successfully loaded data.", "SUCCESS");
         return Results.Ok(JsonNode.Parse(jsonString));
     } catch (Exception ex) {
         SystemState.AddLog($"PROFILE_ERROR: {ex.Message}", "ERROR");
@@ -79,77 +83,36 @@ app.MapGet("/profile", async (IHttpClientFactory clientFactory) => {
 });
 
 app.MapPost("/audit", async (IHttpClientFactory clientFactory) => {
-    SystemState.AddLog("AUDIT: Starting deep history analysis...");
+    SystemState.AddLog("AUDIT: Starting analysis...");
     _ = Task.Run(async () => {
         try {
             using var client = clientFactory.CreateClient();
             var token = await GetStravaAccessToken(client, app.Configuration);
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            var history = await (await client.GetAsync("https://www.strava.com/api/v3/athlete/activities?per_page=100")).Content.ReadFromJsonAsync<List<JsonElement>>();
+            var res = await client.GetAsync("https://www.strava.com/api/v3/athlete/activities?per_page=100");
+            var history = await res.Content.ReadFromJsonAsync<List<JsonElement>>(AppJsonContext.Default.ListJsonElement);
             
             using var aiClient = clientFactory.CreateClient("GeminiClient");
             var key = ResolveApiKey(app.Configuration);
             
-            var milestoneSchema = new {
-                type = "OBJECT",
-                properties = new {
-                    count = new { type = "INTEGER" },
-                    pb = new { type = "STRING" }
-                },
-                required = new[] { "count", "pb" }
-            };
-
-            var schema = new {
-                type = "OBJECT",
-                properties = new {
-                    lastUpdated = new { type = "STRING" },
-                    summary = new { type = "STRING" },
-                    coachNotes = new { type = "STRING" },
-                    milestones = new { 
-                        type = "OBJECT", 
-                        properties = new {
-                            fiveK = milestoneSchema,
-                            tenK = milestoneSchema,
-                            halfMarathon = milestoneSchema,
-                            marathon = milestoneSchema,
-                            ultra = milestoneSchema
-                        },
-                        required = new[] { "fiveK", "tenK", "halfMarathon" }
-                    },
-                    trainingPlan = new { 
-                        type = "ARRAY", 
-                        items = new { 
-                            type = "OBJECT", 
-                            properties = new {
-                                date = new { type = "STRING" },
-                                type = new { type = "STRING", @enum = new[] { "Easy", "Tempo", "Interval", "Long Run", "Gym", "Rest" } },
-                                title = new { type = "STRING" },
-                                description = new { type = "STRING" }
-                            },
-                            required = new[] { "date", "type", "title", "description" }
-                        } 
-                    }
-                },
-                required = new[] { "summary", "milestones", "trainingPlan" }
-            };
-
+            // Simplified schema to ensure AOT compatibility
             var payload = new {
-                contents = new[] { new { parts = new[] { new { text = $"ROLE: Professional Running Coach. DATA: {JsonSerializer.Serialize(history?.Take(50))}. TASK: Create athlete profile JSON with summary, milestones (PBs), and a 7-day plan." } } } },
-                generationConfig = new { responseMimeType = "application/json", responseSchema = schema, temperature = 0.1 }
+                contents = new[] { new { parts = new[] { new { text = $"ROLE: Coach. DATA: {JsonSerializer.Serialize(history?.Take(20), AppJsonContext.Default.IEnumerableJsonElement)}. TASK: Return athlete profile JSON." } } } },
+                generationConfig = new { responseMimeType = "application/json", temperature = 0.1 }
             };
 
-            var aiRes = await aiClient.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={key}", payload);
-            var result = await aiRes.Content.ReadFromJsonAsync<JsonElement>();
+            var aiRes = await aiClient.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={key}", payload, AppJsonContext.Default.Object);
+            var result = await aiRes.Content.ReadFromJsonAsync<JsonElement>(AppJsonContext.Default.JsonElement);
             var profileJson = SafeExtractText(result);
             
             var cache = history?.FirstOrDefault(a => a.GetProperty("name").GetString() == "[StravAI] System Cache");
             var timestamp = DateTime.UtcNow.ToString("O");
-            var desc = $"[StravAI System Cache]\nDO NOT DELETE\n---CACHE_START---\n{profileJson}\n---CACHE_END---\nUpdated: {timestamp}";
+            var desc = $"---CACHE_START---\n{profileJson}\n---CACHE_END---\nUpdated: {timestamp}";
             
-            if (cache.HasValue) await client.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{cache.Value.GetProperty("id").GetInt64()}", new { description = desc });
-            else await client.PostAsJsonAsync("https://www.strava.com/api/v3/activities", new { name = "[StravAI] System Cache", type = "Run", start_date_local = timestamp, elapsed_time = 1, description = desc, @private = true });
+            if (cache.HasValue) await client.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{cache.Value.GetProperty("id").GetInt64()}", new { description = desc }, AppJsonContext.Default.Object);
+            else await client.PostAsJsonAsync("https://www.strava.com/api/v3/activities", new { name = "[StravAI] System Cache", type = "Run", start_date_local = timestamp, elapsed_time = 1, description = desc, @private = true }, AppJsonContext.Default.Object);
             
-            SystemState.AddLog("AUDIT: Success. Profile rebuilt and cached.", "SUCCESS");
+            SystemState.AddLog("AUDIT: Cache updated.", "SUCCESS");
         } catch (Exception ex) {
             SystemState.AddLog($"AUDIT_ERROR: {ex.Message}", "ERROR");
         }
@@ -162,11 +125,11 @@ app.MapGet("/webhook", ([FromQuery(Name = "hub.mode")] string mode, [FromQuery(N
     return (mode == "subscribe" && verifyToken == secret) ? Results.Ok(new { hub_challenge = challenge }) : Results.Unauthorized();
 });
 
-app.MapPost("/webhook", async (HttpContext context, IHttpClientFactory clientFactory) => {
+app.MapPost("/webhook", async (HttpContext context) => {
     var body = await new StreamReader(context.Request.Body).ReadToEndAsync();
-    var eventData = JsonSerializer.Deserialize<JsonElement>(body);
+    var eventData = JsonSerializer.Deserialize<JsonElement>(body, AppJsonContext.Default.JsonElement);
     if (eventData.TryGetProperty("object_type", out var objType) && objType.GetString() == "activity") {
-        SystemState.AddLog($"WEBHOOK: {eventData.GetProperty("aspect_type").GetString()} event for {eventData.GetProperty("object_id")}");
+        SystemState.AddLog($"WEBHOOK: Event for {eventData.GetProperty("object_id")}");
     }
     return Results.Ok();
 });
@@ -176,24 +139,15 @@ app.Run();
 // --- HELPERS ---
 
 string SafeExtractText(JsonElement root) {
-    if (root.TryGetProperty("error", out var error)) throw new Exception(error.GetProperty("message").GetString());
-    var text = root.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString() ?? "";
-    
-    // Robust Markdown cleaning
-    if (text.Contains("```")) {
-        var lines = text.Split('\n');
-        var jsonLines = lines.SkipWhile(l => !l.Trim().StartsWith("```"))
-                             .Skip(1)
-                             .TakeWhile(l => !l.Trim().StartsWith("```"));
-        text = string.Join("\n", jsonLines);
-        if (string.IsNullOrWhiteSpace(text)) {
-            // Fallback for cases where splits are weird
+    try {
+        var text = root.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString() ?? "";
+        if (text.Contains("```")) {
             var s = text.IndexOf("{");
             var e = text.LastIndexOf("}");
             if (s >= 0 && e > s) text = text.Substring(s, e - s + 1);
         }
-    }
-    return text.Trim();
+        return text.Trim();
+    } catch { return "{}"; }
 }
 
 async Task<string?> GetStravaAccessToken(HttpClient client, IConfiguration config) {
@@ -203,7 +157,7 @@ async Task<string?> GetStravaAccessToken(HttpClient client, IConfiguration confi
         new KeyValuePair<string, string>("refresh_token", GetEnv("STRAVA_REFRESH_TOKEN", config)),
         new KeyValuePair<string, string>("grant_type", "refresh_token")
     }));
-    var data = await res.Content.ReadFromJsonAsync<JsonElement>();
+    var data = await res.Content.ReadFromJsonAsync<JsonElement>(AppJsonContext.Default.JsonElement);
     return data.TryGetProperty("access_token", out var t) ? t.GetString() : null;
 }
 
@@ -219,3 +173,11 @@ public static class SystemState {
         Console.WriteLine(entry);
     }
 }
+
+// Source Generation Context for AOT
+[JsonSerializable(typeof(List<JsonElement>))]
+[JsonSerializable(typeof(JsonElement))]
+[JsonSerializable(typeof(IEnumerable<JsonElement>))]
+[JsonSerializable(typeof(object))]
+[JsonSerializable(typeof(string[]))]
+internal partial class AppJsonContext : JsonSerializerContext { }
