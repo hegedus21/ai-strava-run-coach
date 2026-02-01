@@ -23,7 +23,6 @@ var minuteCounter = new ConcurrentDictionary<int, int>();
 var lastMinute = -1;
 var logs = new ConcurrentQueue<string>();
 
-List<JsonElement>? _activitiesCache = null;
 long? _cachedSystemActivityId = null;
 DateTime _cacheExpiry = DateTime.MinValue;
 string? _cachedToken = null;
@@ -40,8 +39,9 @@ void AddLog(string message, string level = "INFO") {
 var config = app.Configuration;
 string GetEnv(string key) {
     var val = Environment.GetEnvironmentVariable(key);
-    if (!string.IsNullOrEmpty(val)) return val;
-    return config[key] ?? "";
+    if (!string.IsNullOrEmpty(val)) return val.Trim();
+    var cfgVal = config[key];
+    return !string.IsNullOrEmpty(cfgVal) ? cfgVal.Trim() : "";
 }
 
 string GetCetTimestamp() {
@@ -89,7 +89,7 @@ async Task<long?> GetCachedSystemActivityId(HttpClient client) {
 
 // --- CORE ENDPOINTS ---
 
-app.MapGet("/health", () => Results.Ok(new { status = "healthy", engine = "StravAI_v1.7.5_EngineFix" }));
+app.MapGet("/health", () => Results.Ok(new { status = "healthy", engine = "StravAI_v1.7.6_AuthIsolated" }));
 app.MapGet("/logs", () => Results.Ok(logs.ToArray()));
 
 app.MapGet("/profile", async (IHttpClientFactory clientFactory) => {
@@ -136,29 +136,27 @@ app.MapPost("/audit", async (string? since, IHttpClientFactory clientFactory) =>
     AddLog("AUDIT_INIT: Commencing physiological audit.");
     _ = Task.Run(async () => {
         try {
-            using var client = clientFactory.CreateClient();
-            
-            // AI KEY RESOLUTION: Prioritize standard API_KEY, then GEMINI_API_KEY
+            // AI KEY RESOLUTION
             var apiKey = GetEnv("API_KEY");
             if (string.IsNullOrEmpty(apiKey) || apiKey == "YOUR_GOOGLE_API_KEY") {
                 apiKey = GetEnv("GEMINI_API_KEY");
             }
 
             if (string.IsNullOrEmpty(apiKey) || apiKey == "YOUR_GOOGLE_API_KEY") {
-                AddLog("AUTH_ERR: No Gemini key found in environment variables (API_KEY or GEMINI_API_KEY).", "ERROR");
+                AddLog("AUTH_ERR: No Gemini key found. Please set 'API_KEY' in Koyeb Secrets.", "ERROR");
                 return;
             }
             
-            // Masked logging for verification
-            string maskedKey = apiKey.Length > 8 ? $"{apiKey[..4]}...{apiKey[^4..]}" : "********";
-            AddLog($"AUTH_ID: Key discovered successfully [{maskedKey}].");
+            string maskedKey = apiKey.Length > 8 ? $"{apiKey[..4]}...{apiKey[^4..]}" : "INVALID_KEY";
+            AddLog($"AUTH_ID: Key detected [{maskedKey}] (Length: {apiKey.Length}).");
 
-            var token = await GetStravaAccessToken(client);
+            using var stravaClient = clientFactory.CreateClient();
+            var token = await GetStravaAccessToken(stravaClient);
             if (token == null) {
                 AddLog("AUTH_ERR: Failed to retrieve Strava access token.", "ERROR");
                 return;
             }
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            stravaClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
             
             var allActivities = new List<JsonElement>();
             int page = 1;
@@ -168,7 +166,7 @@ app.MapPost("/audit", async (string? since, IHttpClientFactory clientFactory) =>
             AddLog($"CRAWL: Searching post-timestamp {sinceTs}.");
 
             while(page <= maxPages) {
-                var batchRes = await client.GetAsync($"https://www.strava.com/api/v3/athlete/activities?per_page=200&page={page}&after={sinceTs}");
+                var batchRes = await stravaClient.GetAsync($"https://www.strava.com/api/v3/athlete/activities?per_page=200&page={page}&after={sinceTs}");
                 if (!batchRes.IsSuccessStatusCode) {
                     AddLog($"STRAVA_ERR: {batchRes.StatusCode}", "ERROR");
                     break;
@@ -203,8 +201,8 @@ app.MapPost("/audit", async (string? since, IHttpClientFactory clientFactory) =>
             AddLog($"INTELLIGENCE: Transmitting {cleanData.Count} markers to Gemini 3...");
             var prompt = "Perform physiological aggregate audit. Return strict JSON. DATA: " + JsonSerializer.Serialize(cleanData);
             
-            var cacheId = await GetCachedSystemActivityId(client);
-            var cacheActJson = (cacheId != null ? (await client.GetFromJsonAsync<JsonElement>($"https://www.strava.com/api/v3/activities/{cacheId}")) : (JsonElement?)null);
+            var cacheId = await GetCachedSystemActivityId(stravaClient);
+            var cacheActJson = (cacheId != null ? (await stravaClient.GetFromJsonAsync<JsonElement>($"https://www.strava.com/api/v3/activities/{cacheId}")) : (JsonElement?)null);
             var cacheDesc = cacheActJson?.TryGetProperty("description", out var cd) == true ? cd.GetString() ?? "" : "";
             
             int currentUsed = 0;
@@ -218,15 +216,15 @@ app.MapPost("/audit", async (string? since, IHttpClientFactory clientFactory) =>
                 } catch { }
             }
 
-            AddLog("AI_INFERENCE: Processing response...");
-            var aiRes = await client.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={apiKey}", new { contents = new[] { new { parts = new[] { new { text = prompt } } } } });
+            AddLog("AI_INFERENCE: Isolation protocol active - using clean HTTP client...");
+            
+            // CRITICAL: We create a fresh client here to ensure NO Strava Authorization headers leak into the Gemini request.
+            using var aiClient = clientFactory.CreateClient("GeminiClient");
+            var aiRes = await aiClient.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={apiKey}", new { contents = new[] { new { parts = new[] { new { text = prompt } } } } });
             
             if (!aiRes.IsSuccessStatusCode) {
                 var errBody = await aiRes.Content.ReadAsStringAsync();
                 AddLog($"AI_ERR: {aiRes.StatusCode} - {errBody}", "ERROR");
-                if (aiRes.StatusCode == System.Net.HttpStatusCode.Unauthorized) {
-                    AddLog("HINT: The API Key is invalid. Check 'API_KEY' or 'GEMINI_API_KEY' in Koyeb Secrets.", "WARN");
-                }
                 return;
             }
 
@@ -246,7 +244,7 @@ app.MapPost("/audit", async (string? since, IHttpClientFactory clientFactory) =>
             }
 
             if (string.IsNullOrWhiteSpace(aiText)) {
-                AddLog("AI_ERR: Model returned an empty payload. Check safety settings.", "ERROR");
+                AddLog("AI_ERR: Analysis text missing from response.", "ERROR");
                 return;
             }
 
@@ -258,14 +256,12 @@ app.MapPost("/audit", async (string? since, IHttpClientFactory clientFactory) =>
             var finalDesc = $"[StravAI System Cache]\n---CACHE_START---\n{aiText}\n---CACHE_END---\n{quotaStr}\nUpdated: {GetCetTimestamp()}";
 
             if (cacheId == null) {
-                AddLog("CLOUD_INIT: Provisioning cloud cache activity...");
-                await client.PostAsJsonAsync("https://www.strava.com/api/v3/activities", new { name="[StravAI] System Cache", type="Run", start_date_local=DateTime.UtcNow.ToString("O"), elapsed_time=1, description=finalDesc, @private=true });
+                await stravaClient.PostAsJsonAsync("https://www.strava.com/api/v3/activities", new { name="[StravAI] System Cache", type="Run", start_date_local=DateTime.UtcNow.ToString("O"), elapsed_time=1, description=finalDesc, @private=true });
             } else {
-                AddLog("CLOUD_SYNC: Syncing analysis to Strava persistence node...");
-                await client.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{cacheId}", new { description = finalDesc });
+                await stravaClient.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{cacheId}", new { description = finalDesc });
             }
             
-            AddLog("AUDIT_SUCCESS: System intelligence updated.");
+            AddLog("AUDIT_SUCCESS: Intelligence updated.");
             _cacheExpiry = DateTime.MinValue; 
         } catch (Exception ex) { 
             AddLog($"AUDIT_FATAL: {ex.Message}", "ERROR"); 
