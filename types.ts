@@ -1,28 +1,7 @@
 
-export interface StravaActivity {
-  id: number;
-  name: string;
-  type: string;
-  start_date: string;
-  distance: number;
-  moving_time: number;
-  total_elevation_gain: number;
-  average_heartrate?: number;
-  max_heartrate?: number;
-  average_speed: number;
-  max_speed: number;
-  description?: string;
-  kilojoules?: number;
-}
-
-export interface GoalSettings {
-  raceType: string;
-  raceDate: string;
-  goalTime: string;
-}
 
 export interface HeartRateZones {
-  z1: number; // Percentage 0-100
+  z1: number;
   z2: number;
   z3: number;
   z4: number;
@@ -34,67 +13,28 @@ export interface QuotaStatus {
   dailyLimit: number;
   minuteUsed: number;
   minuteLimit: number;
-  resetAt: string; // ISO string for estimated reset
+  resetAt: string;
 }
 
-export interface PeriodicStat {
-  distanceKm: number;
-  durationMins: number;
+export interface RunCategory {
   count: number;
-  zones: HeartRateZones;
+  pb: string; // Time format or N/A
+  category: string;
 }
 
-export interface YearlyStat {
-  year: number;
-  distanceKm: number;
-  durationHours: number;
-  activityCount: number;
-  zones: HeartRateZones;
+export interface TrainingSession {
+  date: string;
+  type: 'Easy' | 'Tempo' | 'Interval' | 'Long Run' | 'Gym' | 'Rest';
+  title: string;
+  description: string;
+  distance?: string;
+  duration?: string;
+  targetPace?: string;
+  intervals?: string; // e.g. "6x800m @ 3:45"
+  isCompleted: boolean;
 }
 
-export interface AthleteProfile {
-  lastUpdated: string;
-  summary: string;
-  quota: QuotaStatus;
-  stats: {
-    marathons: number;
-    halfMarathons: number;
-    ironmans: number;
-    seventyThrees: number;
-    ultras: number;
-    totalRuns: number;
-    totalDistanceKm: number;
-  };
-  milestones: {
-    fiveK: number;
-    tenK: number;
-    twentyK: number;
-    halfMarathon: number;
-    thirtyK: number;
-    marathon: number;
-    ultra: number;
-  };
-  periodic: {
-    week: PeriodicStat;
-    month: PeriodicStat;
-    year: PeriodicStat;
-  };
-  yearlyHistory: YearlyStat[];
-  triathlon: {
-    sprint: number;
-    olympic: number;
-    halfIronman: number;
-    ironman: number;
-  };
-  pbs: {
-    fiveK?: string;
-    tenK?: string;
-    halfMarathon?: string;
-    marathon?: string;
-  };
-  coachNotes: string;
-}
-
+// Added AIAnalysis interface for coach analysis results
 export interface AIAnalysis {
   summary: string;
   activityClassification: 'Easy' | 'Tempo' | 'Long Run' | 'Intervals' | 'Threshold' | 'Other';
@@ -103,7 +43,6 @@ export interface AIAnalysis {
   cons: string[];
   trendImpact: string;
   goalProgressPercentage: number;
-  daysRemaining: number;
   nextWeekFocus: string;
   nextTrainingSuggestion: {
     type: string;
@@ -112,19 +51,76 @@ export interface AIAnalysis {
     description: string;
     targetMetrics: string;
   };
+  daysRemaining: number;
 }
 
+// Added GoalSettings interface for athlete training goals
+export interface GoalSettings {
+  raceType: string;
+  raceDate: string;
+  goalTime: string;
+}
+
+// Added StravaUpdateParams interface for activity update requests
 export interface StravaUpdateParams {
-  description: string;
+  description?: string;
   name?: string;
 }
 
-export interface StravaWebhookEvent {
-  object_type: 'activity' | 'athlete';
-  object_id: number;
-  aspect_type: 'create' | 'update' | 'delete';
-  updates: Record<string, string>;
-  owner_id: number;
-  subscription_id: number;
-  event_time: number;
+export interface AthleteProfile {
+  lastUpdated: string;
+  summary: string;
+  coachNotes: string;
+  stravaQuota: QuotaStatus;
+  geminiQuota: QuotaStatus;
+  
+  // Categorized Stats
+  milestones: {
+    backyardLoops: RunCategory;
+    fiveK: RunCategory;
+    tenK: RunCategory;
+    twentyK: RunCategory;
+    halfMarathon: RunCategory;
+    marathon: RunCategory;
+    ultra: RunCategory;
+    other: RunCategory;
+  };
+  
+  triathlon: {
+    sprint: number;
+    olympic: number;
+    halfIronman: number;
+    ironman: number;
+  };
+
+  periodic: {
+    week: { distanceKm: number; zones: HeartRateZones };
+    month: { distanceKm: number; zones: HeartRateZones };
+    year: { distanceKm: number; zones: HeartRateZones };
+  };
+
+  trainingPlan: TrainingSession[];
+  yearlyHistory: Array<{
+    year: number;
+    activityCount: number;
+    distanceKm: number;
+    zones: HeartRateZones;
+  }>;
+}
+
+export interface StravaActivity {
+  id: number;
+  name: string;
+  type: string;
+  start_date: string;
+  distance: number;
+  moving_time: number;
+  total_elevation_gain: number;
+  average_heartrate?: number;
+  // Added optional fields to match API responses and mock data
+  max_heartrate?: number;
+  average_speed?: number;
+  max_speed?: number;
+  kilojoules?: number;
+  description?: string;
 }
