@@ -7,8 +7,9 @@ using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Net;
 
-var builder = WebApplication.CreateSlimBuilder(args); // Use SlimBuilder for AOT optimization
+var builder = WebApplication.CreateSlimBuilder(args);
 
+// Configure JSON Source Generation for Native AOT
 builder.Services.ConfigureHttpJsonOptions(options => {
     options.SerializerOptions.TypeInfoResolverChain.Insert(0, AppJsonContext.Default);
 });
@@ -25,7 +26,9 @@ builder.Services.AddCors(options => options.AddPolicy("AllowAll", p => p.AllowAn
 var app = builder.Build();
 
 app.MapHealthChecks("/health");
-app.MapGet("/", () => Results.Ok(new { service = "StravAI", status = "online", timestamp = DateTime.UtcNow }));
+
+// Root Route - Uses concrete record ServiceStatus
+app.MapGet("/", () => Results.Ok(new ServiceStatus("StravAI", "online", DateTime.UtcNow)));
 
 app.UseCors("AllowAll");
 
@@ -61,7 +64,7 @@ app.MapGet("/profile", async (IHttpClientFactory clientFactory) => {
         
         if (!cache.HasValue) {
             SystemState.AddLog("PROFILE: No cache activity found.", "INFO");
-            return Results.NotFound(new { error = "Cache not found. Please run an audit." });
+            return Results.NotFound(new ErrorResponse("Cache not found. Please run an audit."));
         }
 
         var detailRes = await client.GetAsync($"https://www.strava.com/api/v3/activities/{cache.Value.GetProperty("id").GetInt64()}");
@@ -70,7 +73,7 @@ app.MapGet("/profile", async (IHttpClientFactory clientFactory) => {
         
         if (!desc.Contains("---CACHE_START---")) {
             SystemState.AddLog("PROFILE: Found cache activity but no data markers.", "WARNING");
-            return Results.NotFound(new { error = "Cache activity empty." });
+            return Results.NotFound(new ErrorResponse("Cache activity empty."));
         }
 
         var jsonString = desc.Split("---CACHE_START---")[1].Split("---CACHE_END---")[0].Trim();
@@ -95,13 +98,13 @@ app.MapPost("/audit", async (IHttpClientFactory clientFactory) => {
             using var aiClient = clientFactory.CreateClient("GeminiClient");
             var key = ResolveApiKey(app.Configuration);
             
-            // Simplified schema to ensure AOT compatibility
-            var payload = new {
-                contents = new[] { new { parts = new[] { new { text = $"ROLE: Coach. DATA: {JsonSerializer.Serialize(history?.Take(20), AppJsonContext.Default.IEnumerableJsonElement)}. TASK: Return athlete profile JSON." } } } },
-                generationConfig = new { responseMimeType = "application/json", temperature = 0.1 }
-            };
+            // Define concrete Gemini request
+            var geminiRequest = new GeminiRequest(
+                new[] { new GeminiContent(new[] { new GeminiPart($"ROLE: Coach. DATA: {JsonSerializer.Serialize(history?.Take(20), AppJsonContext.Default.IEnumerableJsonElement)}. TASK: Return athlete profile JSON.") }) },
+                new GeminiConfig("application/json", 0.1f)
+            );
 
-            var aiRes = await aiClient.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={key}", payload, AppJsonContext.Default.Object);
+            var aiRes = await aiClient.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={key}", geminiRequest, AppJsonContext.Default.GeminiRequest);
             var result = await aiRes.Content.ReadFromJsonAsync<JsonElement>(AppJsonContext.Default.JsonElement);
             var profileJson = SafeExtractText(result);
             
@@ -109,8 +112,11 @@ app.MapPost("/audit", async (IHttpClientFactory clientFactory) => {
             var timestamp = DateTime.UtcNow.ToString("O");
             var desc = $"---CACHE_START---\n{profileJson}\n---CACHE_END---\nUpdated: {timestamp}";
             
-            if (cache.HasValue) await client.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{cache.Value.GetProperty("id").GetInt64()}", new { description = desc }, AppJsonContext.Default.Object);
-            else await client.PostAsJsonAsync("https://www.strava.com/api/v3/activities", new { name = "[StravAI] System Cache", type = "Run", start_date_local = timestamp, elapsed_time = 1, description = desc, @private = true }, AppJsonContext.Default.Object);
+            if (cache.HasValue) {
+                await client.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{cache.Value.GetProperty("id").GetInt64()}", new ActivityUpdate(desc), AppJsonContext.Default.ActivityUpdate);
+            } else {
+                await client.PostAsJsonAsync("https://www.strava.com/api/v3/activities", new ActivityCreate("[StravAI] System Cache", "Run", timestamp, 1, desc, true), AppJsonContext.Default.ActivityCreate);
+            }
             
             SystemState.AddLog("AUDIT: Cache updated.", "SUCCESS");
         } catch (Exception ex) {
@@ -122,7 +128,7 @@ app.MapPost("/audit", async (IHttpClientFactory clientFactory) => {
 
 app.MapGet("/webhook", ([FromQuery(Name = "hub.mode")] string mode, [FromQuery(Name = "hub.challenge")] string challenge, [FromQuery(Name = "hub.verify_token")] string verifyToken) => {
     var secret = GetEnv("STRAVA_VERIFY_TOKEN", app.Configuration) ?? "STRAVAI_SECURE_TOKEN";
-    return (mode == "subscribe" && verifyToken == secret) ? Results.Ok(new { hub_challenge = challenge }) : Results.Unauthorized();
+    return (mode == "subscribe" && verifyToken == secret) ? Results.Ok(new WebhookChallengeResponse(challenge)) : Results.Unauthorized();
 });
 
 app.MapPost("/webhook", async (HttpContext context) => {
@@ -151,12 +157,13 @@ string SafeExtractText(JsonElement root) {
 }
 
 async Task<string?> GetStravaAccessToken(HttpClient client, IConfiguration config) {
-    var res = await client.PostAsync("https://www.strava.com/oauth/token", new FormUrlEncodedContent(new[] {
-        new KeyValuePair<string, string>("client_id", GetEnv("STRAVA_CLIENT_ID", config)),
-        new KeyValuePair<string, string>("client_secret", GetEnv("STRAVA_CLIENT_SECRET", config)),
-        new KeyValuePair<string, string>("refresh_token", GetEnv("STRAVA_REFRESH_TOKEN", config)),
-        new KeyValuePair<string, string>("grant_type", "refresh_token")
-    }));
+    var form = new Dictionary<string, string> {
+        ["client_id"] = GetEnv("STRAVA_CLIENT_ID", config),
+        ["client_secret"] = GetEnv("STRAVA_CLIENT_SECRET", config),
+        ["refresh_token"] = GetEnv("STRAVA_REFRESH_TOKEN", config),
+        ["grant_type"] = "refresh_token"
+    };
+    var res = await client.PostAsync("https://www.strava.com/oauth/token", new FormUrlEncodedContent(form));
     var data = await res.Content.ReadFromJsonAsync<JsonElement>(AppJsonContext.Default.JsonElement);
     return data.TryGetProperty("access_token", out var t) ? t.GetString() : null;
 }
@@ -174,7 +181,26 @@ public static class SystemState {
     }
 }
 
+// --- CONCRETE TYPES FOR AOT SERIALIZATION ---
+
+public record ServiceStatus(string Service, string Status, DateTime Timestamp);
+public record ErrorResponse(string Error);
+public record WebhookChallengeResponse(string hub_challenge);
+public record ActivityUpdate(string Description);
+public record ActivityCreate(string Name, string Type, string Start_date_local, int Elapsed_time, string Description, bool Private);
+
+public record GeminiPart(string Text);
+public record GeminiContent(GeminiPart[] Parts);
+public record GeminiConfig(string ResponseMimeType, float Temperature);
+public record GeminiRequest(GeminiContent[] Contents, GeminiConfig GenerationConfig);
+
 // Source Generation Context for AOT
+[JsonSerializable(typeof(ServiceStatus))]
+[JsonSerializable(typeof(ErrorResponse))]
+[JsonSerializable(typeof(WebhookChallengeResponse))]
+[JsonSerializable(typeof(ActivityUpdate))]
+[JsonSerializable(typeof(ActivityCreate))]
+[JsonSerializable(typeof(GeminiRequest))]
 [JsonSerializable(typeof(List<JsonElement>))]
 [JsonSerializable(typeof(JsonElement))]
 [JsonSerializable(typeof(IEnumerable<JsonElement>))]
