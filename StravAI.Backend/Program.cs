@@ -110,7 +110,7 @@ app.MapPost("/audit", async (string? since, IHttpClientFactory clientFactory) =>
     {
         try
         {
-            var apiKey = GetEnv("API_KEY") ?? GetEnv("GEMINI_API_KEY");
+            var apiKey = GetEnv("GEMINI_API_KEY");
             if (string.IsNullOrEmpty(apiKey))
             {
                 SystemState.AddLog("AUTH_ERR: No Gemini API Key provided in environment.", "ERROR");
