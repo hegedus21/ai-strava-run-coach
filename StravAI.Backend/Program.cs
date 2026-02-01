@@ -23,8 +23,6 @@ var minuteCounter = new ConcurrentDictionary<int, int>();
 var lastMinute = -1;
 var logs = new ConcurrentQueue<string>();
 
-// Rate-Limit Mitigation: Cache the Strava activity list and cache ID for 10 minutes
-// NOTE: Removed 'private static' because top-level statements do not support them.
 List<JsonElement>? _activitiesCache = null;
 long? _cachedSystemActivityId = null;
 DateTime _cacheExpiry = DateTime.MinValue;
@@ -74,7 +72,6 @@ app.Use(async (context, next) => {
 async Task<long?> GetCachedSystemActivityId(HttpClient client) {
     if (_cachedSystemActivityId.HasValue && DateTime.UtcNow < _cacheExpiry) return _cachedSystemActivityId;
     
-    // Scan last 100 activities for the cache marker
     var res = await client.GetAsync("https://www.strava.com/api/v3/athlete/activities?per_page=100");
     if (!res.IsSuccessStatusCode) return _cachedSystemActivityId;
 
@@ -82,7 +79,7 @@ async Task<long?> GetCachedSystemActivityId(HttpClient client) {
     _cacheExpiry = DateTime.UtcNow.AddMinutes(10);
     
     foreach(var act in activities ?? new()) {
-        if (act.GetProperty("name").GetString() == "[StravAI] System Cache") {
+        if (act.TryGetProperty("name", out var name) && name.GetString() == "[StravAI] System Cache") {
             _cachedSystemActivityId = act.GetProperty("id").GetInt64();
             return _cachedSystemActivityId;
         }
@@ -92,7 +89,7 @@ async Task<long?> GetCachedSystemActivityId(HttpClient client) {
 
 // --- CORE ENDPOINTS ---
 
-app.MapGet("/health", () => Results.Ok(new { status = "healthy", engine = "StravAI_v1.7.1_Fixed" }));
+app.MapGet("/health", () => Results.Ok(new { status = "healthy", engine = "StravAI_v1.7.3_Hardened" }));
 app.MapGet("/logs", () => Results.Ok(logs.ToArray()));
 
 app.MapGet("/profile", async (IHttpClientFactory clientFactory) => {
@@ -102,10 +99,10 @@ app.MapGet("/profile", async (IHttpClientFactory clientFactory) => {
     client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
     
     var id = await GetCachedSystemActivityId(client);
-    if (id == null) return Results.NotFound("System cache activity not found. Please trigger an audit.");
+    if (id == null) return Results.NotFound("System cache activity not found.");
     
     var act = await client.GetFromJsonAsync<JsonElement>($"https://www.strava.com/api/v3/activities/{id}");
-    var desc = act.GetProperty("description").GetString() ?? "";
+    var desc = act.TryGetProperty("description", out var dProp) ? dProp.GetString() ?? "" : "";
     
     if (!desc.Contains("---CACHE_START---")) return Results.NotFound("Cache content missing.");
     
@@ -115,8 +112,10 @@ app.MapGet("/profile", async (IHttpClientFactory clientFactory) => {
     JsonNode? quotaNode = null;
     if (desc.Contains("---QUOTA_START---")) {
         var qStr = desc.Split("---QUOTA_START---")[1].Split("---QUOTA_END---")[0];
-        quotaNode = JsonNode.Parse(qStr);
-    } else {
+        try { quotaNode = JsonNode.Parse(qStr); } catch { }
+    }
+    
+    if (quotaNode == null) {
         quotaNode = JsonNode.Parse(JsonSerializer.Serialize(new { dailyUsed = 0, resetAt = DateTime.UtcNow.AddDays(1).ToString("O") }));
     }
     
@@ -134,7 +133,7 @@ app.MapGet("/profile", async (IHttpClientFactory clientFactory) => {
 });
 
 app.MapPost("/audit", async (string? since, IHttpClientFactory clientFactory) => {
-    AddLog("AUDIT_INIT: Engine warming up...");
+    AddLog("AUDIT_INIT: Hardening dataset...");
     _ = Task.Run(async () => {
         try {
             using var client = clientFactory.CreateClient();
@@ -147,52 +146,86 @@ app.MapPost("/audit", async (string? since, IHttpClientFactory clientFactory) =>
             int maxPages = 8;
             var sinceTs = DateTimeOffset.Parse(since ?? "2024-01-01").ToUnixTimeSeconds();
             
-            AddLog($"CRAWL_START: Range 2024 to present.");
+            AddLog($"CRAWL: Searching for records post-timestamp {sinceTs}.");
 
             while(page <= maxPages) {
-                AddLog($"DOWNLOAD [Page {page}/{maxPages}]: Fetching next block...");
                 var batch = await client.GetFromJsonAsync<List<JsonElement>>($"https://www.strava.com/api/v3/athlete/activities?per_page=200&page={page}&after={sinceTs}");
-                
-                if (batch == null || batch.Count == 0) {
-                    AddLog($"DOWNLOAD_COMPLETE: All historical records synced ({allActivities.Count} total).");
-                    break;
-                }
-
+                if (batch == null || batch.Count == 0) break;
                 allActivities.AddRange(batch);
-                AddLog($"BATCH_PROCESSED: {batch.Count} runs found. Remaining budget: {maxPages - page} pages.");
-                
-                if (batch.Count < 200) {
-                    AddLog($"DOWNLOAD_COMPLETE: Reached end of historical data. Total activities: {allActivities.Count}.");
-                    break;
-                }
+                AddLog($"SYNC: Downloaded {batch.Count} records. Total: {allActivities.Count}.");
+                if (batch.Count < 200) break;
                 page++;
             }
 
-            AddLog($"INTELLIGENCE: Submitting dataset to Gemini 3 for physiological mapping...");
-            var prompt = "Perform physiological aggregate audit. Return strict JSON. DATA: " + 
-                         JsonSerializer.Serialize(allActivities.Select(a => new { t=a.GetProperty("type").GetString(), d=a.GetProperty("distance").GetDouble(), hr=a.TryGetProperty("average_heartrate", out var h)?h.GetDouble():0, dt=a.GetProperty("start_date").GetString() }));
+            if (allActivities.Count == 0) {
+                AddLog("AUDIT_STOP: No relevant records found.", "WARN");
+                return;
+            }
 
+            // DEFENSIVE MAPPING: Avoid KeyNotFoundException by checking every property
+            AddLog("PRE_PROCESS: Mapping physiological markers...");
+            var cleanData = allActivities.Select(a => {
+                a.TryGetProperty("type", out var t);
+                a.TryGetProperty("distance", out var d);
+                a.TryGetProperty("start_date", out var dt);
+                a.TryGetProperty("average_heartrate", out var hr);
+                return new {
+                    t = t.ValueKind != JsonValueKind.Undefined ? t.GetString() : "Unknown",
+                    d = d.ValueKind != JsonValueKind.Undefined ? d.GetDouble() : 0,
+                    hr = hr.ValueKind != JsonValueKind.Undefined ? hr.GetDouble() : 0,
+                    dt = dt.ValueKind != JsonValueKind.Undefined ? dt.GetString() : "1970-01-01"
+                };
+            }).ToList();
+
+            AddLog($"INTELLIGENCE: Submitting {cleanData.Count} markers to Gemini...");
+            var prompt = "Perform physiological aggregate audit. Return strict JSON. DATA: " + JsonSerializer.Serialize(cleanData);
             var apiKey = GetEnv("GEMINI_API_KEY");
             
             var cacheId = await GetCachedSystemActivityId(client);
-            var cacheAct = (cacheId != null ? (await client.GetFromJsonAsync<JsonElement>($"https://www.strava.com/api/v3/activities/{cacheId}")) : (JsonElement?)null);
-            var cacheDesc = cacheAct?.TryGetProperty("description", out var cd) == true ? cd.GetString() ?? "" : "";
+            var cacheActJson = (cacheId != null ? (await client.GetFromJsonAsync<JsonElement>($"https://www.strava.com/api/v3/activities/{cacheId}")) : (JsonElement?)null);
+            var cacheDesc = cacheActJson?.TryGetProperty("description", out var cd) == true ? cd.GetString() ?? "" : "";
             
             int currentUsed = 0;
             string resetAtStr = DateTime.UtcNow.AddDays(1).ToString("O");
             if (cacheDesc.Contains("---QUOTA_START---")) {
-                var qStr = cacheDesc.Split("---QUOTA_START---")[1].Split("---QUOTA_END---")[0];
-                var qObj = JsonSerializer.Deserialize<JsonElement>(qStr);
-                currentUsed = qObj.GetProperty("dailyUsed").GetInt32();
-                resetAtStr = qObj.GetProperty("resetAt").GetString() ?? resetAtStr;
+                try {
+                    var qStr = cacheDesc.Split("---QUOTA_START---")[1].Split("---QUOTA_END---")[0];
+                    var qObj = JsonSerializer.Deserialize<JsonElement>(qStr);
+                    if (qObj.TryGetProperty("dailyUsed", out var u)) currentUsed = u.GetInt32();
+                    if (qObj.TryGetProperty("resetAt", out var r)) resetAtStr = r.GetString() ?? resetAtStr;
+                } catch { }
             }
 
-            AddLog("AI_INFERENCE: Processing data patterns...");
+            AddLog("AI_INFERENCE: Awaiting analysis...");
             var aiRes = await client.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={apiKey}", new { contents = new[] { new { parts = new[] { new { text = prompt } } } } });
-            var aiResJson = await aiRes.Content.ReadFromJsonAsync<JsonElement>();
-            var aiText = aiResJson.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString();
+            
+            if (!aiRes.IsSuccessStatusCode) {
+                AddLog($"AI_ERR: HTTP {aiRes.StatusCode}", "ERROR");
+                return;
+            }
 
-            if (aiText!.Contains("```json")) aiText = aiText.Split("```json")[1].Split("```")[0].Trim();
+            var aiResJson = await aiRes.Content.ReadFromJsonAsync<JsonElement>();
+            string aiText = "";
+
+            // DEFENSIVE AI PARSING: Search parts for text content
+            if (aiResJson.TryGetProperty("candidates", out var candidates) && candidates.GetArrayLength() > 0) {
+                var content = candidates[0].GetProperty("content");
+                if (content.TryGetProperty("parts", out var parts)) {
+                    foreach (var part in parts.EnumerateArray()) {
+                        if (part.TryGetProperty("text", out var textProp)) {
+                            aiText = textProp.GetString() ?? "";
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(aiText)) {
+                AddLog("AI_ERR: Empty text part in response.", "ERROR");
+                return;
+            }
+
+            if (aiText.Contains("```json")) aiText = aiText.Split("```json")[1].Split("```")[0].Trim();
             else if (aiText.Contains("```")) aiText = aiText.Split("```")[1].Split("```")[0].Trim();
 
             currentUsed++;
@@ -200,30 +233,28 @@ app.MapPost("/audit", async (string? since, IHttpClientFactory clientFactory) =>
             var finalDesc = $"[StravAI System Cache]\n---CACHE_START---\n{aiText}\n---CACHE_END---\n{quotaStr}\nUpdated: {GetCetTimestamp()}";
 
             if (cacheId == null) {
-                AddLog("SYSTEM_SYNC: Creating new persistent system activity...");
                 await client.PostAsJsonAsync("https://www.strava.com/api/v3/activities", new { name="[StravAI] System Cache", type="Run", start_date_local=DateTime.UtcNow.ToString("O"), elapsed_time=1, description=finalDesc, @private=true });
             } else {
-                AddLog("SYSTEM_SYNC: Updating persistent physiological profile...");
                 await client.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{cacheId}", new { description = finalDesc });
             }
             
-            AddLog("AUDIT_SUCCESS: System Intelligence Refreshed.");
+            AddLog("AUDIT_SUCCESS: Dataset Refreshed.");
             _cacheExpiry = DateTime.MinValue; 
-        } catch (Exception ex) { AddLog($"AUDIT_ERR: {ex.Message}", "ERROR"); }
+        } catch (Exception ex) { 
+            AddLog($"AUDIT_FATAL: {ex.Message} (Stack: {ex.StackTrace?.Split('\n')[0]})", "ERROR"); 
+        }
     });
     return Results.Accepted();
 });
 
 async Task<string?> GetStravaAccessToken(HttpClient client) {
     if (_cachedToken != null && DateTime.UtcNow < _tokenExpiry) return _cachedToken;
-    
     var authRes = await client.PostAsync("https://www.strava.com/oauth/token", new FormUrlEncodedContent(new[] {
         new KeyValuePair<string, string>("client_id", GetEnv("STRAVA_CLIENT_ID")),
         new KeyValuePair<string, string>("client_secret", GetEnv("STRAVA_CLIENT_SECRET")),
         new KeyValuePair<string, string>("refresh_token", GetEnv("STRAVA_REFRESH_TOKEN")),
         new KeyValuePair<string, string>("grant_type", "refresh_token")
     }));
-    
     if (authRes.IsSuccessStatusCode) {
         var data = await authRes.Content.ReadFromJsonAsync<JsonElement>();
         _cachedToken = data.GetProperty("access_token").GetString();
