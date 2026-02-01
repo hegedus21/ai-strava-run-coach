@@ -4,19 +4,20 @@ import React from 'react';
 import { StravAILogo } from './components/Icon';
 import { AthleteProfile, HeartRateZones, QuotaStatus } from './types';
 
-const ZoneBar = ({ zones, label, pulse }: { zones: HeartRateZones, label: string, pulse?: boolean }) => {
-  const total = zones.z1 + zones.z2 + zones.z3 + zones.z4 + zones.z5 || 100;
+const ZoneBar = ({ zones, label, pulse }: { zones?: HeartRateZones, label: string, pulse?: boolean }) => {
+  const z = zones || { z1: 0, z2: 0, z3: 0, z4: 0, z5: 0 };
+  const total = z.z1 + z.z2 + z.z3 + z.z4 + z.z5 || 100;
   return (
     <div className={`space-y-2 transition-all duration-700 ${pulse ? 'ring-2 ring-cyan-500/50 rounded-lg p-1 -m-1' : ''}`}>
       <div className="flex justify-between items-center text-[9px] font-black uppercase tracking-widest">
         <span className="text-slate-500">{label}</span>
       </div>
       <div className="h-3 w-full flex rounded-full overflow-hidden border border-slate-800 bg-slate-900 shadow-inner">
-        <div style={{ width: `${(zones.z1/total)*100}%` }} className="bg-blue-500 h-full" title="Z1" />
-        <div style={{ width: `${(zones.z2/total)*100}%` }} className="bg-emerald-500 h-full" title="Z2" />
-        <div style={{ width: `${(zones.z3/total)*100}%` }} className="bg-yellow-500 h-full" title="Z3" />
-        <div style={{ width: `${(zones.z4/total)*100}%` }} className="bg-orange-500 h-full" title="Z4" />
-        <div style={{ width: `${(zones.z5/total)*100}%` }} className="bg-red-500 h-full" title="Z5" />
+        <div style={{ width: `${(z.z1/total)*100}%` }} className="bg-blue-500 h-full" title="Z1" />
+        <div style={{ width: `${(z.z2/total)*100}%` }} className="bg-emerald-500 h-full" title="Z2" />
+        <div style={{ width: `${(z.z3/total)*100}%` }} className="bg-yellow-500 h-full" title="Z3" />
+        <div style={{ width: `${(z.z4/total)*100}%` }} className="bg-orange-500 h-full" title="Z4" />
+        <div style={{ width: `${(z.z5/total)*100}%` }} className="bg-red-500 h-full" title="Z5" />
       </div>
     </div>
   );
@@ -148,7 +149,6 @@ const App: React.FC = () => {
       if (res.ok) {
         const newLogs: string[] = await res.json();
         
-        // Check for specific failure markers in logs
         if (auditPending && newLogs.some(l => l.includes('AUTH_ERR') || l.includes('AI_ERR: Unauthorized'))) {
           setAuditPending(false);
           setNotification({ msg: 'CRITICAL_AUTH_FAILURE: Check Backend API Keys.', type: 'error' });
@@ -238,7 +238,7 @@ const App: React.FC = () => {
               <h2 className="text-[9px] font-black text-slate-600 uppercase tracking-widest mb-4">Actions</h2>
               <button 
                 onClick={handleAudit} 
-                disabled={auditPending || backendStatus !== 'ONLINE' || (profile?.quota.dailyUsed || 0) > 1485}
+                disabled={auditPending || backendStatus !== 'ONLINE' || (profile?.quota?.dailyUsed || 0) > 1485}
                 className={`w-full py-3 rounded border font-bold uppercase text-[10px] transition-all disabled:opacity-50 ${auditPending ? 'bg-amber-500/10 border-amber-500/40 text-amber-500 animate-pulse' : 'bg-slate-800 hover:bg-slate-700 text-amber-400 border-amber-500/20'}`}
               >
                 {auditPending ? 'AUDITING...' : 'Trigger_Audit'}
@@ -265,34 +265,34 @@ const App: React.FC = () => {
                       <h3 className="text-cyan-400 font-black uppercase text-xs mb-4">Coach's_Summary</h3>
                       <p className="text-slate-400 leading-relaxed text-[11px] h-32 overflow-y-auto pr-2 custom-scroll">{profile.summary}</p>
                       <div className="mt-4 pt-4 border-t border-slate-800 italic text-slate-500 text-[10px]">
-                         "{profile.coachNotes}"
+                         "{profile.coachNotes || "Keep pushing your limits."}"
                       </div>
                    </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                   <div className="bg-slate-900/40 p-6 border border-slate-800 rounded-2xl space-y-4">
-                    <ZoneBar zones={profile.periodic.week.zones} label="Weekly_Intensity" pulse={justUpdated} />
-                    <p className="text-lg font-black text-white">{profile.periodic.week.distanceKm.toFixed(1)} km</p>
+                    <ZoneBar zones={profile.periodic?.week?.zones} label="Weekly_Intensity" pulse={justUpdated} />
+                    <p className="text-lg font-black text-white">{profile.periodic?.week?.distanceKm?.toFixed(1) || "0.0"} km</p>
                   </div>
                   <div className="bg-slate-900/40 p-6 border border-slate-800 rounded-2xl space-y-4">
-                    <ZoneBar zones={profile.periodic.month.zones} label="Monthly_Intensity" pulse={justUpdated} />
-                    <p className="text-lg font-black text-white">{profile.periodic.month.distanceKm.toFixed(1)} km</p>
+                    <ZoneBar zones={profile.periodic?.month?.zones} label="Monthly_Intensity" pulse={justUpdated} />
+                    <p className="text-lg font-black text-white">{profile.periodic?.month?.distanceKm?.toFixed(1) || "0.0"} km</p>
                   </div>
                   <div className="bg-slate-900/40 p-6 border border-slate-800 rounded-2xl space-y-4">
-                    <ZoneBar zones={profile.periodic.year.zones} label="Annual_Intensity" pulse={justUpdated} />
-                    <p className="text-lg font-black text-white">{profile.periodic.year.distanceKm.toFixed(0)} km</p>
+                    <ZoneBar zones={profile.periodic?.year?.zones} label="Annual_Intensity" pulse={justUpdated} />
+                    <p className="text-lg font-black text-white">{profile.periodic?.year?.distanceKm?.toFixed(0) || "0"} km</p>
                   </div>
                 </div>
 
                 <section className="space-y-4">
                    <h3 className="text-white font-black uppercase text-xs tracking-widest px-1">Physiological_History</h3>
                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                      {profile.yearlyHistory.map(y => (
+                      {profile.yearlyHistory?.map(y => (
                         <div key={y.year} className="bg-slate-900/50 p-4 border border-slate-800 rounded-xl space-y-4 hover:border-slate-700 transition-colors shadow-inner">
                            <div className="flex justify-between items-center">
                               <span className="text-sm font-black text-white">{y.year}</span>
-                              <span className="text-[10px] font-black text-cyan-500 uppercase">{y.activityCount} runs</span>
+                              <span className="text-[10px] font-black text-cyan-500 uppercase">{y.activityCount || 0} runs</span>
                            </div>
                            <ZoneBar zones={y.zones} label={`Career_Split`} />
                         </div>
