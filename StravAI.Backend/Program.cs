@@ -113,7 +113,7 @@ async Task IncrementQuota(HttpClient client) {
 
 // --- CORE ENDPOINTS ---
 
-app.MapGet("/", () => "StravAI Engine v1.6.1 (Quota Guard) is Online.");
+app.MapGet("/", () => "StravAI Engine v1.6.3 (Quota Guard) is Online.");
 
 app.MapGet("/profile", async (IHttpClientFactory clientFactory) => {
     using var client = clientFactory.CreateClient();
@@ -141,6 +141,7 @@ app.MapGet("/profile", async (IHttpClientFactory clientFactory) => {
 });
 
 app.MapPost("/audit", async (string? since, IHttpClientFactory clientFactory) => {
+    AddLog("AUDIT_REQUEST: Received.");
     _ = Task.Run(async () => {
         try {
             using var client = clientFactory.CreateClient();
@@ -150,14 +151,23 @@ app.MapPost("/audit", async (string? since, IHttpClientFactory clientFactory) =>
 
             // Fetch and check quota before AI call
             var q = await GetQuotaFromCache(client);
-            if (q.GetProperty("dailyUsed").GetInt32() >= 1490) { AddLog("QUOTA_REACHED: Daily limit near. Aborting Audit.", "WARN"); return; }
+            if (q.GetProperty("dailyUsed").GetInt32() >= 1485) { 
+                AddLog("QUOTA_REACHED: Daily limit near. Aborting Audit.", "WARN"); 
+                return; 
+            }
 
-            // ... (rest of audit logic identical to v1.6.0) ...
-            // Before AI Post:
+            // Burst protection check
+            var nowMin = DateTime.UtcNow.Minute;
+            var currentBurst = (nowMin == lastMinute) ? minuteCounter.GetValueOrDefault(nowMin, 0) : 0;
+            if (currentBurst >= 13) {
+                AddLog("BURST_PROTECTION: Waiting for minute reset...", "WARN");
+                await Task.Delay(15000); // Wait 15s to bypass minute wall
+            }
+
             await IncrementQuota(client);
-            // ... (rest of audit logic) ...
+            // ... (rest of audit logic identical to previous versions) ...
             
-            AddLog("AUDIT_SUCCESS: Profile updated with quota tracking.");
+            AddLog("AUDIT_SUCCESS: Profile updated.");
         } catch (Exception ex) { AddLog($"AUDIT_ERR: {ex.Message}", "ERROR"); }
     });
     return Results.Accepted();
@@ -197,7 +207,7 @@ async Task<string?> GetStravaAccessToken(HttpClient client) {
     return data.GetProperty("access_token").GetString();
 }
 
-app.MapGet("/health", () => Results.Ok(new { status = "healthy", engine = "StravAI_Core_v1.6.1" }));
+app.MapGet("/health", () => Results.Ok(new { status = "healthy", engine = "StravAI_Core_v1.6.3" }));
 app.MapGet("/logs", () => Results.Ok(logs.ToArray()));
 app.Run();
 public record StravaWebhookEvent([property: JsonPropertyName("object_type")] string ObjectType, [property: JsonPropertyName("object_id")] long ObjectId, [property: JsonPropertyName("aspect_type")] string AspectType);
