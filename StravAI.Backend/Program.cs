@@ -26,10 +26,15 @@ app.UseCors("AllowAll");
 
 // Startup Verification
 SystemState.AddLog("SYSTEM_BOOT: Verifying environment configuration...");
-string[] requiredKeys = { "STRAVA_CLIENT_ID", "STRAVA_CLIENT_SECRET", "STRAVA_REFRESH_TOKEN", "API_KEY" };
-foreach(var key in requiredKeys) {
+string[] criticalKeys = { "STRAVA_CLIENT_ID", "STRAVA_CLIENT_SECRET", "STRAVA_REFRESH_TOKEN", "API_KEY", "GEMINI_API_KEY" };
+foreach(var key in criticalKeys) {
     var val = GetEnv(key);
-    SystemState.AddLog($"CONFIG_CHECK: {key} is {(string.IsNullOrEmpty(val) ? "MISSING" : "LOADED")}");
+    if (string.IsNullOrEmpty(val)) {
+        SystemState.AddLog($"CONFIG_CHECK: {key} is MISSING", "WARNING");
+    } else {
+        var masked = val.Length > 8 ? $"{val[..4]}...{val[^4..]}" : "****";
+        SystemState.AddLog($"CONFIG_CHECK: {key} is LOADED ({masked})");
+    }
 }
 
 // --- WEBHOOK MANAGEMENT ---
@@ -130,7 +135,7 @@ app.MapPost("/webhook", async (HttpContext context, IHttpClientFactory clientFac
 
 // --- SERVICE ENDPOINTS ---
 
-app.MapGet("/health", () => Results.Ok(new { status = "healthy", version = "2.3.3_DIAGNOSTIC" }));
+app.MapGet("/health", () => Results.Ok(new { status = "healthy", version = "2.3.4_AUTH_FIX" }));
 app.MapGet("/logs", () => Results.Ok(SystemState.Logs.ToArray()));
 
 app.MapGet("/profile", async (IHttpClientFactory clientFactory) => {
@@ -201,7 +206,9 @@ app.Run();
 // --- LOGIC HELPERS ---
 
 async Task<string> RunCoachSingleActivityAnalysis(HttpClient aiClient, JsonElement activity, List<JsonElement> history) {
-    var apiKey = GetEnv("API_KEY") ?? GetEnv("GEMINI_API_KEY");
+    var apiKey = ResolveApiKey();
+    if (string.IsNullOrEmpty(apiKey)) return "[StravAI Error] AI Key missing.";
+
     var prompt = $@"ROLE: Elite Coach. Analyze NEW activity vs 30-day trends. 
 DATA: {JsonSerializer.Serialize(activity)} 
 HISTORY: {JsonSerializer.Serialize(history.Take(20))}";
@@ -221,7 +228,9 @@ HISTORY: {JsonSerializer.Serialize(history.Take(20))}";
 }
 
 async Task<string> RunCoachFullProfileAnalysis(HttpClient aiClient, List<JsonElement> history) {
-    var apiKey = GetEnv("API_KEY") ?? GetEnv("GEMINI_API_KEY");
+    var apiKey = ResolveApiKey();
+    if (string.IsNullOrEmpty(apiKey)) return "{}";
+
     var prompt = $@"ROLE: Elite Coach. Return raw JSON AthleteProfile. DATA: {JsonSerializer.Serialize(history.Take(80))}";
     
     var aiRes = await aiClient.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={apiKey}", new {
@@ -241,8 +250,32 @@ async Task<string> RunCoachFullProfileAnalysis(HttpClient aiClient, List<JsonEle
     return (s != -1 && e != -1) ? text.Substring(s, e - s + 1) : "{}";
 }
 
+string ResolveApiKey() {
+    var key = GetEnv("API_KEY");
+    if (string.IsNullOrEmpty(key)) key = GetEnv("GEMINI_API_KEY");
+    
+    if (string.IsNullOrEmpty(key)) {
+        SystemState.AddLog("AUTH_ERR: No API Key found in environment or config.", "ERROR");
+        return "";
+    }
+    
+    if (key == "YOUR_GOOGLE_API_KEY") {
+        SystemState.AddLog("AUTH_ERR: Using placeholder API key. Please update your environment variables.", "ERROR");
+        return "";
+    }
+    
+    return key;
+}
+
 string SafeExtractText(JsonElement root) {
     try {
+        // Handle Google Error Object explicitly
+        if (root.TryGetProperty("error", out var errorObj)) {
+            var msg = errorObj.TryGetProperty("message", out var m) ? m.GetString() : "Unknown Google API error";
+            SystemState.AddLog($"AI_API_ERROR: {msg}", "ERROR");
+            return "";
+        }
+
         var candidates = GetRequiredProperty(root, "candidates", "SafeExtractText[Root]");
         if (candidates.ValueKind != JsonValueKind.Array || candidates.GetArrayLength() == 0) {
             SystemState.AddLog("AI_PARSE: 'candidates' is empty or not an array.", "ERROR");
@@ -269,7 +302,6 @@ string SafeExtractText(JsonElement root) {
 JsonElement GetRequiredProperty(JsonElement element, string name, string context) {
     if (element.TryGetProperty(name, out var prop)) return prop;
     
-    // Diagnostic Block
     var keys = new List<string>();
     if (element.ValueKind == JsonValueKind.Object) {
         foreach (var p in element.EnumerateObject()) keys.Add(p.Name);
@@ -277,9 +309,9 @@ JsonElement GetRequiredProperty(JsonElement element, string name, string context
     
     var available = string.Join(", ", keys);
     var raw = element.ToString();
-    var snippet = raw.Length > 200 ? raw.Substring(0, 200) + "..." : raw;
+    var snippet = raw.Length > 200 ? raw[..200] + "..." : raw;
     
-    throw new KeyNotFoundException($"[{context}] MISSING KEY: '{name}'. Available keys at this level: [{available}]. Raw Data Snippet: {snippet}");
+    throw new KeyNotFoundException($"[{context}] MISSING KEY: '{name}'. Available keys: [{available}]. Raw Data: {snippet}");
 }
 
 async Task<string?> GetStravaAccessToken(HttpClient client) {
@@ -305,7 +337,7 @@ async Task<string?> GetStravaAccessToken(HttpClient client) {
             SystemState.TokenExpiry = DateTime.UtcNow.AddHours(5);
             return SystemState.CachedToken;
         } else {
-            SystemState.AddLog($"STRAVA_AUTH: Missing 'access_token' in Strava response. Response: {content}", "ERROR");
+            SystemState.AddLog($"STRAVA_AUTH: Missing 'access_token' in response. Response: {content}", "ERROR");
             return null;
         }
     } catch (Exception ex) {
@@ -321,7 +353,7 @@ async Task<long?> GetCachedSystemActivityId(HttpClient client) {
         if (!res.IsSuccessStatusCode) return null;
         var acts = await res.Content.ReadFromJsonAsync<List<JsonElement>>();
         SystemState.CacheExpiry = DateTime.UtcNow.AddMinutes(5);
-        foreach (var act in acts ?? new()) {
+        foreach (var act in acts ?? []) {
             if (act.TryGetProperty("name", out var n) && n.GetString() == "[StravAI] System Cache") {
                 if (act.TryGetProperty("id", out var idProp)) {
                     SystemState.CachedSystemActivityId = idProp.GetInt64();
@@ -338,7 +370,9 @@ async Task<long?> GetCachedSystemActivityId(HttpClient client) {
 string GetEnv(string key) {
     var val = Environment.GetEnvironmentVariable(key);
     if (!string.IsNullOrEmpty(val)) return val.Trim();
-    return app.Configuration[key]?.Trim() ?? "";
+    val = app.Configuration[key];
+    if (!string.IsNullOrEmpty(val)) return val.Trim();
+    return "";
 }
 
 string GetCetTimestamp() {
