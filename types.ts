@@ -1,5 +1,4 @@
 
-
 export interface HeartRateZones {
   z1: number;
   z2: number;
@@ -18,7 +17,7 @@ export interface QuotaStatus {
 
 export interface RunCategory {
   count: number;
-  pb: string; // Time format or N/A
+  pb: string; // Time format e.g. "19:45"
   category: string;
 }
 
@@ -30,41 +29,16 @@ export interface TrainingSession {
   distance?: string;
   duration?: string;
   targetPace?: string;
-  intervals?: string; // e.g. "6x800m @ 3:45"
-  isCompleted: boolean;
-}
-
-// Added AIAnalysis interface for coach analysis results
-export interface AIAnalysis {
-  summary: string;
-  activityClassification: 'Easy' | 'Tempo' | 'Long Run' | 'Intervals' | 'Threshold' | 'Other';
-  effectivenessScore: number;
-  pros: string[];
-  cons: string[];
-  trendImpact: string;
-  goalProgressPercentage: number;
-  nextWeekFocus: string;
-  nextTrainingSuggestion: {
-    type: string;
-    distance: string;
-    duration: string;
-    description: string;
-    targetMetrics: string;
+  intervals?: {
+    reps: number;
+    work: string; // e.g. "800m" or "3min"
+    rest: string; // e.g. "200m" or "90s"
+    pace: string;
+    warmup: string;
+    cooldown: string;
   };
-  daysRemaining: number;
-}
-
-// Added GoalSettings interface for athlete training goals
-export interface GoalSettings {
-  raceType: string;
-  raceDate: string;
-  goalTime: string;
-}
-
-// Added StravaUpdateParams interface for activity update requests
-export interface StravaUpdateParams {
-  description?: string;
-  name?: string;
+  gymWorkout?: string[]; // List of dumbbell exercises
+  isCompleted: boolean;
 }
 
 export interface AthleteProfile {
@@ -76,7 +50,7 @@ export interface AthleteProfile {
   
   // Categorized Stats
   milestones: {
-    backyardLoops: RunCategory;
+    backyardLoop: RunCategory;
     fiveK: RunCategory;
     tenK: RunCategory;
     twentyK: RunCategory;
@@ -117,10 +91,39 @@ export interface StravaActivity {
   moving_time: number;
   total_elevation_gain: number;
   average_heartrate?: number;
-  // Added optional fields to match API responses and mock data
   max_heartrate?: number;
   average_speed?: number;
   max_speed?: number;
   kilojoules?: number;
   description?: string;
+}
+
+export interface AIAnalysis {
+  summary: string;
+  activityClassification: string;
+  effectivenessScore: number;
+  pros: string[];
+  cons: string[];
+  trendImpact: string;
+  goalProgressPercentage: number;
+  nextWeekFocus: string;
+  nextTrainingSuggestion: {
+    type: string;
+    distance: string;
+    duration: string;
+    description: string;
+    targetMetrics: string;
+  };
+  daysRemaining: number;
+}
+
+export interface GoalSettings {
+  raceType: string;
+  raceDate: string;
+  goalTime: string;
+}
+
+export interface StravaUpdateParams {
+  description?: string;
+  name?: string;
 }
