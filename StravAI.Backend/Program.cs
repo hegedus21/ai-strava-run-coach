@@ -89,7 +89,7 @@ async Task<long?> GetCachedSystemActivityId(HttpClient client) {
 
 // --- CORE ENDPOINTS ---
 
-app.MapGet("/health", () => Results.Ok(new { status = "healthy", engine = "StravAI_v1.7.6_AuthIsolated" }));
+app.MapGet("/health", () => Results.Ok(new { status = "healthy", engine = "StravAI_v1.7.7_SchemaStrict" }));
 app.MapGet("/logs", () => Results.Ok(logs.ToArray()));
 
 app.MapGet("/profile", async (IHttpClientFactory clientFactory) => {
@@ -136,7 +136,6 @@ app.MapPost("/audit", async (string? since, IHttpClientFactory clientFactory) =>
     AddLog("AUDIT_INIT: Commencing physiological audit.");
     _ = Task.Run(async () => {
         try {
-            // AI KEY RESOLUTION
             var apiKey = GetEnv("API_KEY");
             if (string.IsNullOrEmpty(apiKey) || apiKey == "YOUR_GOOGLE_API_KEY") {
                 apiKey = GetEnv("GEMINI_API_KEY");
@@ -199,7 +198,20 @@ app.MapPost("/audit", async (string? since, IHttpClientFactory clientFactory) =>
             }).ToList();
 
             AddLog($"INTELLIGENCE: Transmitting {cleanData.Count} markers to Gemini 3...");
-            var prompt = "Perform physiological aggregate audit. Return strict JSON. DATA: " + JsonSerializer.Serialize(cleanData);
+            
+            // EXPLICIT SCHEMA IN PROMPT
+            var prompt = @"Analyze activity history. Return a SINGLE JSON object matching this schema exactly:
+{
+  ""summary"": ""brief coaching summary string"",
+  ""coachNotes"": ""encouraging quote string"",
+  ""periodic"": {
+    ""week"": { ""distanceKm"": 0.0, ""zones"": { ""z1"": 0, ""z2"": 0, ""z3"": 0, ""z4"": 0, ""z5"": 0 } },
+    ""month"": { ""distanceKm"": 0.0, ""zones"": { ""z1"": 0, ""z2"": 0, ""z3"": 0, ""z4"": 0, ""z5"": 0 } },
+    ""year"": { ""distanceKm"": 0.0, ""zones"": { ""z1"": 0, ""z2"": 0, ""z3"": 0, ""z4"": 0, ""z5"": 0 } }
+  },
+  ""yearlyHistory"": [ { ""year"": 2024, ""activityCount"": 0, ""distanceKm"": 0.0, ""zones"": { ""z1"": 0, ""z2"": 0, ""z3"": 0, ""z4"": 0, ""z5"": 0 } } ]
+}
+DATA: " + JsonSerializer.Serialize(cleanData);
             
             var cacheId = await GetCachedSystemActivityId(stravaClient);
             var cacheActJson = (cacheId != null ? (await stravaClient.GetFromJsonAsync<JsonElement>($"https://www.strava.com/api/v3/activities/{cacheId}")) : (JsonElement?)null);
@@ -218,7 +230,6 @@ app.MapPost("/audit", async (string? since, IHttpClientFactory clientFactory) =>
 
             AddLog("AI_INFERENCE: Isolation protocol active - using clean HTTP client...");
             
-            // CRITICAL: We create a fresh client here to ensure NO Strava Authorization headers leak into the Gemini request.
             using var aiClient = clientFactory.CreateClient("GeminiClient");
             var aiRes = await aiClient.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={apiKey}", new { contents = new[] { new { parts = new[] { new { text = prompt } } } } });
             
