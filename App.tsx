@@ -114,7 +114,7 @@ const App: React.FC = () => {
   const [backendStatus, setBackendStatus] = useState<'UNKNOWN' | 'ONLINE' | 'OFFLINE'>('UNKNOWN');
   const [auditPending, setAuditPending] = useState(false);
   const [showSetup, setShowSetup] = useState(!backendUrl || !backendSecret);
-  const [notification, setNotification] = useState<{msg: string, type: 'info' | 'success'} | null>(null);
+  const [notification, setNotification] = useState<{msg: string, type: 'info' | 'success' | 'error'} | null>(null);
   const [justUpdated, setJustUpdated] = useState(false);
   
   const lastUpdatedRef = useRef<string | null>(null);
@@ -147,6 +147,14 @@ const App: React.FC = () => {
       const res = await securedFetch(`${backendUrl.trim().replace(/\/$/, '')}/logs`);
       if (res.ok) {
         const newLogs: string[] = await res.json();
+        
+        // Check for specific failure markers in logs
+        if (auditPending && newLogs.some(l => l.includes('AUTH_ERR') || l.includes('AI_ERR: Unauthorized'))) {
+          setAuditPending(false);
+          setNotification({ msg: 'CRITICAL_AUTH_FAILURE: Check Backend API Keys.', type: 'error' });
+          setTimeout(() => setNotification(null), 10000);
+        }
+
         if (auditPending && newLogs.some(l => l.includes('AUDIT_SUCCESS'))) {
           setAuditPending(false);
           setNotification({ msg: 'AUDIT_COMPLETE: System Intelligence Updated.', type: 'success' });
@@ -185,7 +193,11 @@ const App: React.FC = () => {
     setAuditPending(true);
     setNotification({ msg: 'AUDIT_START: Initiating physiological crawl...', type: 'info' });
     try {
-      await securedFetch(`${backendUrl.trim().replace(/\/$/, '')}/audit`, { method: 'POST' });
+      const res = await securedFetch(`${backendUrl.trim().replace(/\/$/, '')}/audit`, { method: 'POST' });
+      if (res.status === 401) {
+          setAuditPending(false);
+          setNotification({ msg: 'AUTH_FAILED: Invalid System Secret.', type: 'error' });
+      }
     } catch (e) {
       setAuditPending(false);
       setNotification(null);
@@ -236,8 +248,8 @@ const App: React.FC = () => {
 
         <main className="flex-grow flex flex-col bg-slate-950 overflow-hidden relative">
           {notification && (
-            <div className={`absolute top-6 right-6 z-50 px-4 py-3 rounded-lg border shadow-2xl animate-bounce flex items-center gap-3 ${notification.type === 'success' ? 'bg-cyan-900/90 border-cyan-500 text-cyan-100' : 'bg-slate-800 border-slate-700 text-slate-300'}`}>
-              <div className={`w-2 h-2 rounded-full ${notification.type === 'success' ? 'bg-cyan-400 shadow-[0_0_10px_#22d3ee]' : 'bg-amber-400 animate-ping'}`} />
+            <div className={`absolute top-6 right-6 z-50 px-4 py-3 rounded-lg border shadow-2xl animate-bounce flex items-center gap-3 ${notification.type === 'success' ? 'bg-cyan-900/90 border-cyan-500 text-cyan-100' : notification.type === 'error' ? 'bg-red-900/90 border-red-500 text-red-100' : 'bg-slate-800 border-slate-700 text-slate-300'}`}>
+              <div className={`w-2 h-2 rounded-full ${notification.type === 'success' ? 'bg-cyan-400 shadow-[0_0_10px_#22d3ee]' : notification.type === 'error' ? 'bg-red-400 shadow-[0_0_10px_#f87171]' : 'bg-amber-400 animate-ping'}`} />
               <span className="text-[10px] font-bold tracking-tight uppercase">{notification.msg}</span>
             </div>
           )}
