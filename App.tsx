@@ -1,40 +1,123 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import React from 'react';
-import { StravaSubscription } from './services/stravaService';
-import { StravAILogo } from './components/Icon';
 
-interface BackendHealth {
-  status: string;
-  engine: string;
-  config: {
-    gemini_ready: boolean;
-    strava_ready: boolean;
-    security_active: boolean;
-  };
-}
+import { useState, useEffect, useCallback } from 'react';
+import React from 'react';
+import { StravAILogo } from './components/Icon';
+import { AthleteProfile, HeartRateZones, QuotaStatus } from './types';
+
+const ZoneBar = ({ zones, label }: { zones: HeartRateZones, label: string }) => {
+  const total = zones.z1 + zones.z2 + zones.z3 + zones.z4 + zones.z5 || 100;
+  return (
+    <div className="space-y-2">
+      <div className="flex justify-between items-center text-[9px] font-black uppercase tracking-widest">
+        <span className="text-slate-500">{label}</span>
+      </div>
+      <div className="h-3 w-full flex rounded-full overflow-hidden border border-slate-800 bg-slate-900 shadow-inner">
+        <div style={{ width: `${(zones.z1/total)*100}%` }} className="bg-blue-500 h-full" title="Z1" />
+        <div style={{ width: `${(zones.z2/total)*100}%` }} className="bg-emerald-500 h-full" title="Z2" />
+        <div style={{ width: `${(zones.z3/total)*100}%` }} className="bg-yellow-500 h-full" title="Z3" />
+        <div style={{ width: `${(zones.z4/total)*100}%` }} className="bg-orange-500 h-full" title="Z4" />
+        <div style={{ width: `${(zones.z5/total)*100}%` }} className="bg-red-500 h-full" title="Z5" />
+      </div>
+    </div>
+  );
+};
+
+const QuotaMeter = ({ quota }: { quota: QuotaStatus }) => {
+  const [timeLeftStr, setTimeLeftStr] = useState('Calculating...');
+  const dailyPct = (quota.dailyUsed / quota.dailyLimit) * 100;
+  const minutePct = (quota.minuteUsed / quota.minuteLimit) * 100;
+  
+  useEffect(() => {
+    const updateTimer = () => {
+      const resetDate = new Date(quota.resetAt);
+      const diff = resetDate.getTime() - Date.now();
+      
+      if (diff <= 0) {
+        setTimeLeftStr('Ready to Reset');
+        return;
+      }
+
+      const h = Math.floor(diff / (1000 * 60 * 60));
+      const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
+      const s = Math.floor((diff % (1000 * 60)) / 1000);
+      setTimeLeftStr(`${h}h ${m}m ${s}s`);
+    };
+
+    updateTimer();
+    const interval = setInterval(updateTimer, 1000);
+    return () => clearInterval(interval);
+  }, [quota.resetAt]);
+
+  const remaining = quota.dailyLimit - quota.dailyUsed;
+
+  return (
+    <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 space-y-6 relative overflow-hidden">
+      {/* Background decoration */}
+      <div className="absolute top-0 right-0 w-32 h-32 bg-cyan-500/5 blur-3xl rounded-full -mr-16 -mt-16 pointer-events-none" />
+
+      <div className="flex justify-between items-start relative">
+        <div>
+          <h3 className="text-white font-black uppercase text-xs">Intelligence_Fuel_Gauge</h3>
+          <p className="text-[9px] text-slate-500 font-bold mt-0.5">GEMINI 2.0 FLASH (FREE TIER)</p>
+        </div>
+        <div className={`px-2 py-0.5 rounded text-[8px] font-black uppercase ${quota.dailyUsed < quota.dailyLimit * 0.9 ? 'bg-cyan-500/20 text-cyan-400' : 'bg-red-500/20 text-red-400'}`}>
+          {quota.dailyUsed < quota.dailyLimit * 0.9 ? 'SYSTEMS_OPTIMAL' : 'CAPACITY_CRITICAL'}
+        </div>
+      </div>
+
+      <div className="space-y-5">
+        {/* Daily Meter */}
+        <div className="space-y-1.5">
+          <div className="flex justify-between text-[9px] font-bold uppercase tracking-widest">
+            <span className="text-slate-500">Daily_Credits_Remaining</span>
+            <span className="text-white">{remaining} / {quota.dailyLimit}</span>
+          </div>
+          <div className="h-2 w-full bg-slate-800/50 rounded-full overflow-hidden border border-slate-800">
+            <div className={`h-full transition-all duration-1000 ease-out ${dailyPct > 90 ? 'bg-red-500' : dailyPct > 70 ? 'bg-amber-500' : 'bg-cyan-500 shadow-[0_0_10px_rgba(34,211,238,0.5)]'}`} style={{ width: `${dailyPct}%` }} />
+          </div>
+        </div>
+
+        {/* Burst Meter */}
+        <div className="space-y-1.5">
+          <div className="flex justify-between text-[9px] font-bold uppercase tracking-widest">
+            <span className="text-slate-500">Minute_Burst_Capacity</span>
+            <span className="text-white">{quota.minuteUsed} / {quota.minuteLimit} RPM</span>
+          </div>
+          <div className="h-1.5 w-full bg-slate-800/50 rounded-full overflow-hidden">
+            <div className="h-full bg-slate-400 transition-all duration-300" style={{ width: `${minutePct}%` }} />
+          </div>
+        </div>
+      </div>
+
+      <div className="pt-4 border-t border-slate-800/50 grid grid-cols-2 gap-4">
+        <div>
+          <p className="text-[8px] text-slate-500 font-bold uppercase tracking-tighter">Full_Tank_In</p>
+          <p className="text-sm font-black text-white tabular-nums">{timeLeftStr}</p>
+        </div>
+        <div className="text-right">
+          <p className="text-[8px] text-slate-500 font-bold uppercase tracking-tighter">Operational_Status</p>
+          <p className="text-[10px] font-bold text-cyan-400 uppercase">
+            {remaining > 50 ? 'Full_Audit_Ready' : remaining > 5 ? 'Sync_Only' : 'Locked'}
+          </p>
+        </div>
+      </div>
+
+      {/* Helper Info */}
+      <div className="text-[8px] font-bold text-slate-600 uppercase tracking-widest pt-2 flex justify-between">
+        <span>Cost: 1 analysis = 1 unit</span>
+        <span>Est. resets daily @ 00:00 UTC</span>
+      </div>
+    </div>
+  );
+};
 
 const App: React.FC = () => {
   const [backendUrl, setBackendUrl] = useState<string>(localStorage.getItem('stravai_backend_url') || '');
   const [backendSecret, setBackendSecret] = useState<string>(localStorage.getItem('stravai_backend_secret') || '');
-  const [targetActivityId, setTargetActivityId] = useState<string>('');
-  const [activeTab, setActiveTab] = useState<'LOGS' | 'DIAGNOSTICS'>('LOGS');
+  const [profile, setProfile] = useState<AthleteProfile | null>(null);
+  const [backendStatus, setBackendStatus] = useState<'UNKNOWN' | 'ONLINE' | 'OFFLINE'>('UNKNOWN');
+  const [isProcessing, setIsProcessing] = useState(false);
   const [showSetup, setShowSetup] = useState(!backendUrl || !backendSecret);
-  
-  const [subscriptions, setSubscriptions] = useState<StravaSubscription[]>([]);
-  const [backendLogs, setBackendLogs] = useState<string[]>([]);
-  const [backendStatus, setBackendStatus] = useState<'UNKNOWN' | 'ONLINE' | 'UNAUTHORIZED' | 'OFFLINE'>('UNKNOWN');
-  const [backendHealth, setBackendHealth] = useState<BackendHealth | null>(null);
-  const [isProcessing, setIsProcessing] = useState<string | null>(null);
-  
-  const remoteLogsRef = useRef<HTMLDivElement>(null);
-
-  const [localLogs, setLocalLogs] = useState<{ id: string; msg: string; type: 'info' | 'success' | 'error'; time: string }[]>([]);
-
-  const addLocalLog = useCallback((msg: string, type: 'info' | 'success' | 'error' = 'info') => {
-    const id = Math.random().toString(36).substr(2, 9);
-    const time = new Date().toLocaleTimeString();
-    setLocalLogs(prev => [{ id, msg, type, time }, ...prev].slice(0, 50));
-  }, []);
 
   const securedFetch = useCallback(async (url: string, options: RequestInit = {}) => {
     const headers = new Headers(options.headers || {});
@@ -42,86 +125,47 @@ const App: React.FC = () => {
     return fetch(url, { ...options, headers });
   }, [backendSecret]);
 
+  const fetchProfile = useCallback(async () => {
+    if (!backendUrl) return;
+    try {
+      const res = await securedFetch(`${backendUrl.trim().replace(/\/$/, '')}/profile`);
+      if (res.ok) setProfile(await res.json());
+    } catch {}
+  }, [backendUrl, securedFetch]);
+
   const checkBackend = useCallback(async () => {
     if (!backendUrl) return;
     const cleanUrl = backendUrl.trim().replace(/\/$/, '');
-
     try {
       const res = await fetch(`${cleanUrl}/health`);
       if (res.ok) {
         setBackendStatus('ONLINE');
-        setBackendHealth(await res.json());
-        
-        const logsRes = await securedFetch(`${cleanUrl}/logs`);
-        if (logsRes.status === 401) setBackendStatus('UNAUTHORIZED');
-        else if (logsRes.ok) {
-            const newLogs = await logsRes.json();
-            if (Array.isArray(newLogs)) setBackendLogs(newLogs);
-        }
+        fetchProfile();
       } else {
         setBackendStatus('OFFLINE');
       }
     } catch {
       setBackendStatus('OFFLINE');
     }
-  }, [backendUrl, securedFetch]);
-
-  const handleSync = async (type: 'BATCH' | 'TARGET' | 'PULSE', id?: string) => {
-    if (backendStatus !== 'ONLINE' || isProcessing) return;
-    setIsProcessing(type);
-    const cleanUrl = backendUrl.trim().replace(/\/$/, '');
-    
-    let endpoint = `${cleanUrl}/sync`;
-    if (type === 'TARGET' && id) endpoint = `${cleanUrl}/sync/${id}`;
-    if (type === 'PULSE') endpoint = `${cleanUrl}/sync?hours=24`;
-    
-    addLocalLog(`Triggering ${type} Sync...`, "info");
-    
-    try {
-      const res = await securedFetch(endpoint, { method: 'POST' });
-      if (res.ok) {
-        addLocalLog(`${type} sync command accepted.`, "success");
-        setActiveTab('DIAGNOSTICS');
-        if (id) setTargetActivityId('');
-      } else {
-        addLocalLog(res.status === 401 ? "Unauthorized." : "Command failed.", "error");
-      }
-    } catch (e: any) {
-      addLocalLog("Network Error: " + e.message, "error");
-    } finally {
-      setTimeout(() => setIsProcessing(null), 1000);
-    }
-  };
-
-  const refreshSubs = useCallback(async () => {
-    if (backendStatus === 'ONLINE') {
-        try {
-            const cleanUrl = backendUrl.trim().replace(/\/$/, '');
-            const res = await securedFetch(`${cleanUrl}/webhook/subscriptions`);
-            if (res.ok) setSubscriptions(await res.json());
-        } catch (e: any) {
-            addLocalLog("Channel check failed.", "error");
-        }
-    }
-  }, [backendStatus, backendUrl, securedFetch, addLocalLog]);
+  }, [backendUrl, fetchProfile]);
 
   useEffect(() => {
     if (backendUrl) {
       checkBackend();
-      const int = setInterval(checkBackend, 5000);
+      const int = setInterval(checkBackend, 10000);
       return () => clearInterval(int);
     }
   }, [backendUrl, checkBackend]);
 
-  useEffect(() => {
-    if (backendStatus === 'ONLINE') refreshSubs();
-  }, [backendStatus, refreshSubs]);
-
-  useEffect(() => {
-    if (remoteLogsRef.current) {
-        remoteLogsRef.current.scrollTo({ top: remoteLogsRef.current.scrollHeight, behavior: 'smooth' });
+  const handleAudit = async () => {
+    if (backendStatus !== 'ONLINE') return;
+    setIsProcessing(true);
+    try {
+      await securedFetch(`${backendUrl.trim().replace(/\/$/, '')}/audit`, { method: 'POST' });
+    } finally {
+      setTimeout(() => setIsProcessing(false), 2000);
     }
-  }, [backendLogs]);
+  };
 
   const saveConfig = () => {
     localStorage.setItem('stravai_backend_url', backendUrl);
@@ -131,134 +175,120 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-screen bg-slate-950 text-slate-300 font-mono text-[11px] selection:bg-cyan-500 selection:text-white">
-      {/* Header */}
-      <header className="flex items-center justify-between px-6 py-4 bg-slate-900 border-b border-slate-800 shrink-0 shadow-2xl z-20">
+    <div className="flex flex-col h-screen bg-slate-950 text-slate-300 font-mono text-[11px]">
+      <header className="flex items-center justify-between px-6 py-4 bg-slate-900 border-b border-slate-800 shrink-0">
         <div className="flex items-center gap-4">
           <StravAILogo className="w-9 h-9" />
           <div>
-            <h1 className="text-white font-black tracking-tighter uppercase text-sm flex items-center gap-2">
-              StravAI_Command_Center
-              <span className="text-[10px] text-slate-500 font-bold border border-slate-700 px-1.5 rounded">v1.3.6</span>
-            </h1>
-            <div className="flex items-center gap-3 text-[9px] uppercase font-bold tracking-widest mt-0.5">
-              <div className="flex items-center gap-1.5">
-                <span className={`w-1.5 h-1.5 rounded-full ${backendStatus === 'ONLINE' ? 'bg-cyan-400 animate-pulse' : backendStatus === 'UNAUTHORIZED' ? 'bg-amber-500' : 'bg-red-500'}`}></span>
-                <span className={backendStatus === 'ONLINE' ? 'text-cyan-400' : backendStatus === 'UNAUTHORIZED' ? 'text-amber-500' : 'text-red-500'}>{backendStatus}</span>
-              </div>
-              <span className="text-slate-700">|</span>
-              <span className="text-slate-500">{backendHealth?.engine || 'Engine_Disconnected'}</span>
+            <h1 className="text-white font-black tracking-tighter uppercase text-sm">StravAI_Command_Center <span className="text-slate-500 border border-slate-700 px-1 rounded ml-1">v1.6.2</span></h1>
+            <div className={`flex items-center gap-2 text-[9px] uppercase font-bold mt-0.5 ${backendStatus === 'ONLINE' ? 'text-cyan-400' : 'text-red-500'}`}>
+              <span className={`w-1.5 h-1.5 rounded-full ${backendStatus === 'ONLINE' ? 'bg-cyan-400' : 'bg-red-500'}`}></span>
+              {backendStatus}
             </div>
           </div>
         </div>
-        <button onClick={() => setShowSetup(true)} className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded transition-all font-bold uppercase text-[10px]">Settings</button>
+        <button onClick={() => setShowSetup(true)} className="px-3 py-1.5 bg-slate-800 border border-slate-700 rounded text-[10px] font-bold">SETTINGS</button>
       </header>
 
-      {/* Main Content */}
-      <div className="flex-grow flex flex-col md:flex-row min-h-0">
-        {/* Sidebar */}
-        <aside className="w-full md:w-72 border-r border-slate-800 bg-slate-900/40 p-6 space-y-8 overflow-y-auto shrink-0">
-          <section>
-            <h2 className="text-[9px] font-black text-slate-500 uppercase tracking-[0.2em] mb-4">Manual_Sync_Triggers</h2>
-            <div className="space-y-4">
-              <div className="space-y-1.5">
-                <label className="text-[9px] text-slate-600 uppercase font-bold">Targeted_Activity</label>
-                <div className="flex gap-2">
-                  <input 
-                    type="text" 
-                    placeholder="ID..." 
-                    value={targetActivityId}
-                    onChange={e => setTargetActivityId(e.target.value.replace(/\D/g,''))}
-                    className="flex-grow bg-slate-950 border border-slate-800 rounded px-3 py-2 text-[11px] outline-none focus:border-cyan-500"
-                  />
-                  <button onClick={() => handleSync('TARGET', targetActivityId)} disabled={!targetActivityId || !!isProcessing} className="px-3 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-30 text-white rounded font-bold">GO</button>
-                </div>
-              </div>
-
-              <div className="pt-2 space-y-2">
-                <button 
-                  onClick={() => handleSync('PULSE')} 
-                  disabled={!!isProcessing || backendStatus !== 'ONLINE'}
-                  className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-cyan-400 rounded border border-cyan-500/20 font-bold uppercase text-[10px] tracking-widest transition-all"
-                >
-                  {isProcessing === 'PULSE' ? 'Pulsing...' : 'Scan_24H_Pulse'}
-                </button>
-                <button 
-                  onClick={() => handleSync('BATCH')} 
-                  disabled={!!isProcessing || backendStatus !== 'ONLINE'}
-                  className="w-full py-2 bg-slate-950 hover:bg-slate-900 text-slate-500 rounded border border-slate-800 font-bold uppercase text-[10px] tracking-widest transition-all"
-                >
-                  Deep_Batch_Scan
-                </button>
-              </div>
-            </div>
-          </section>
-
-          <section>
-            <h2 className="text-[9px] font-black text-slate-500 uppercase tracking-[0.2em] mb-4">Webhooks</h2>
-            <div className="space-y-2">
-              {subscriptions.length > 0 ? subscriptions.map(s => (
-                <div key={s.id} className="p-3 bg-slate-950 border border-slate-800 rounded">
-                  <div className="text-cyan-400 font-bold truncate">SUB_{s.id}</div>
-                  <div className="text-slate-600 text-[9px] mt-1 break-all uppercase">Active_Listening</div>
-                </div>
-              )) : (
-                <div className="text-slate-700 italic text-[10px] p-2">No active subs.</div>
-              )}
-            </div>
-          </section>
+      <div className="flex-grow flex overflow-hidden">
+        <aside className="w-64 border-r border-slate-800 bg-slate-900/40 p-6 space-y-6 overflow-y-auto">
+            <section>
+              <h2 className="text-[9px] font-black text-slate-600 uppercase tracking-widest mb-4">Core_Actions</h2>
+              <button 
+                onClick={handleAudit} 
+                disabled={isProcessing || backendStatus !== 'ONLINE' || (profile?.quota.dailyUsed || 0) > 1495}
+                className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-amber-400 rounded border border-amber-500/20 font-bold uppercase text-[10px] transition-all disabled:opacity-50"
+              >
+                {isProcessing ? 'Processing...' : (profile?.quota.dailyUsed || 0) > 1495 ? 'Fuel_Empty' : 'Trigger_Full_Audit'}
+              </button>
+            </section>
         </aside>
 
-        {/* Viewport */}
         <main className="flex-grow flex flex-col bg-slate-950 overflow-hidden">
-          <div className="flex bg-slate-900 border-b border-slate-800 z-10">
-            <button onClick={() => setActiveTab('LOGS')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-2 transition-all ${activeTab === 'LOGS' ? 'border-cyan-400 text-cyan-400 bg-slate-800/30' : 'border-transparent text-slate-500 hover:text-slate-400'}`}>Local_Console</button>
-            <button onClick={() => setActiveTab('DIAGNOSTICS')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-2 transition-all ${activeTab === 'DIAGNOSTICS' ? 'border-cyan-400 text-cyan-400 bg-slate-800/30' : 'border-transparent text-slate-500 hover:text-slate-400'}`}>Cloud_Engine</button>
-          </div>
+          <div className="flex-grow overflow-y-auto p-6 space-y-8 pb-20 scroll-smooth custom-scroll">
+            {profile ? (
+              <div className="max-w-5xl space-y-8">
+                {/* System Header */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                   <QuotaMeter quota={profile.quota} />
+                   <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6 relative overflow-hidden group">
+                      <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity">
+                         <StravAILogo className="w-20 h-20" />
+                      </div>
+                      <h3 className="text-cyan-400 font-black uppercase text-xs mb-4">Coach's_Active_Strategy</h3>
+                      <p className="text-slate-400 leading-relaxed text-[11px] h-24 overflow-y-auto pr-2 custom-scroll">{profile.summary}</p>
+                      <div className="mt-4 pt-4 border-t border-slate-800 italic text-slate-500 text-[10px]">
+                         "{profile.coachNotes}"
+                      </div>
+                   </div>
+                </div>
 
-          <div className="flex-grow overflow-hidden">
-            {activeTab === 'LOGS' ? (
-              <div className="h-full p-6 overflow-y-auto font-mono text-[11px] space-y-1">
-                {localLogs.map(log => (
-                  <div key={log.id} className="flex gap-4">
-                    <span className="text-slate-700">[{log.time}]</span>
-                    <span className={log.type === 'success' ? 'text-green-400' : log.type === 'error' ? 'text-red-400' : 'text-slate-400'}>{log.msg}</span>
+                {/* Intensity Matrix */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div className="bg-slate-900/50 p-6 border border-slate-800 rounded-2xl space-y-4">
+                    <ZoneBar zones={profile.periodic.week.zones} label="Current_Week_Intensity" />
+                    <div className="flex justify-between items-end">
+                       <div>
+                          <p className="text-[8px] text-slate-500 font-bold uppercase">Volume</p>
+                          <p className="text-lg font-black text-white">{profile.periodic.week.distanceKm.toFixed(1)} km</p>
+                       </div>
+                    </div>
                   </div>
-                ))}
+                  <div className="bg-slate-900/50 p-6 border border-slate-800 rounded-2xl space-y-4">
+                    <ZoneBar zones={profile.periodic.month.zones} label="Current_Month_Intensity" />
+                    <div className="flex justify-between items-end">
+                       <div>
+                          <p className="text-[8px] text-slate-500 font-bold uppercase">Volume</p>
+                          <p className="text-lg font-black text-white">{profile.periodic.month.distanceKm.toFixed(1)} km</p>
+                       </div>
+                    </div>
+                  </div>
+                  <div className="bg-slate-900/50 p-6 border border-slate-800 rounded-2xl space-y-4">
+                    <ZoneBar zones={profile.periodic.year.zones} label="Current_Year_Intensity" />
+                    <div className="flex justify-between items-end">
+                       <div>
+                          <p className="text-[8px] text-slate-500 font-bold uppercase">Volume</p>
+                          <p className="text-lg font-black text-white">{profile.periodic.year.distanceKm.toFixed(0)} km</p>
+                       </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Yearly Archive */}
+                <section className="space-y-4">
+                   <h3 className="text-white font-black uppercase text-xs tracking-widest">Physiological_Career_Log</h3>
+                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                      {profile.yearlyHistory.map(y => (
+                        <div key={y.year} className="bg-slate-900 p-4 border border-slate-800 rounded-xl space-y-4 hover:border-slate-700 transition-colors">
+                           <div className="flex justify-between items-center">
+                              <span className="text-sm font-black text-white">{y.year}</span>
+                              <span className="text-[10px] font-black text-cyan-500">{y.distanceKm.toFixed(0)}k</span>
+                           </div>
+                           <ZoneBar zones={y.zones} label={`Distribution`} />
+                        </div>
+                      ))}
+                   </div>
+                </section>
               </div>
             ) : (
-              <div className="h-full p-6 flex flex-col gap-6 overflow-y-auto">
-                <div ref={remoteLogsRef} className="flex-grow bg-slate-950 border border-slate-800 rounded-xl p-5 overflow-y-auto shadow-inner">
-                  {backendStatus === 'UNAUTHORIZED' ? (
-                      <div className="h-full flex items-center justify-center text-amber-500 uppercase font-black tracking-widest">Access_Denied_Check_Secret</div>
-                  ) : backendLogs.length > 0 ? backendLogs.map((l, i) => (
-                      <div key={i} className={`py-1 border-l-2 pl-4 mb-1 ${l.includes("ERROR") ? 'border-red-500 text-red-400' : l.includes("SUCCESS") ? 'border-cyan-400 text-cyan-400 font-bold' : 'border-slate-800 text-slate-500'}`}>{l}</div>
-                  )) : (
-                    <div className="h-full flex items-center justify-center text-slate-800 uppercase tracking-widest italic">Stream Idle</div>
-                  )}
-                </div>
+              <div className="h-64 flex flex-col items-center justify-center border-2 border-dashed border-slate-800 rounded-3xl opacity-50">
+                <p className="text-slate-600 font-black uppercase tracking-widest mb-4">No Data Found on System Bus</p>
+                <button onClick={handleAudit} className="px-4 py-2 bg-slate-800 text-white rounded-lg text-[10px] font-bold uppercase">Begin_Initial_Audit</button>
               </div>
             )}
           </div>
         </main>
       </div>
 
-      {/* Setup Modal */}
       {showSetup && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-md p-4">
-          <div className="bg-slate-900 border border-slate-700 rounded-2xl max-w-lg w-full p-8 space-y-6 shadow-2xl">
-            <h2 className="text-xl font-black text-white uppercase tracking-tighter">System_Link</h2>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-sm p-8 space-y-6">
+            <h2 className="text-white font-black uppercase">System_Sync</h2>
             <div className="space-y-4">
-              <div className="space-y-2">
-                <label className="text-[10px] text-slate-500 uppercase font-black tracking-widest">Koyeb_App_URL</label>
-                <input type="text" value={backendUrl} onChange={e => setBackendUrl(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs text-cyan-400 outline-none focus:border-cyan-500 font-bold"/>
-              </div>
-              <div className="space-y-2">
-                <label className="text-[10px] text-slate-500 uppercase font-black tracking-widest">System_Secret (Verify_Token)</label>
-                <input type="password" placeholder="••••••••" value={backendSecret} onChange={e => setBackendSecret(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-xs text-cyan-400 outline-none focus:border-cyan-500 font-bold"/>
-              </div>
+              <input type="text" placeholder="Backend URL" value={backendUrl} onChange={e => setBackendUrl(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded p-3 text-xs outline-none focus:border-cyan-500"/>
+              <input type="password" placeholder="System Secret" value={backendSecret} onChange={e => setBackendSecret(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded p-3 text-xs outline-none focus:border-cyan-500"/>
             </div>
-            <button onClick={saveConfig} className="w-full py-4 bg-cyan-600 hover:bg-cyan-500 text-white rounded-xl font-black uppercase text-[11px] transition-all">Authorize_Session</button>
+            <button onClick={saveConfig} className="w-full py-3 bg-cyan-600 text-white rounded font-bold uppercase text-[10px]">Authorize</button>
           </div>
         </div>
       )}
