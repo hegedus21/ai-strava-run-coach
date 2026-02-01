@@ -34,12 +34,6 @@ void AddLog(string message, string level = "INFO") {
     Console.WriteLine(logEntry); 
 }
 
-// CACHE GLOBALS
-long? _cachedSystemActivityId = null;
-DateTime _cacheExpiry = DateTime.MinValue;
-string? _cachedToken = null;
-DateTime _tokenExpiry = DateTime.MinValue;
-
 string GetEnv(string key) {
     var val = Environment.GetEnvironmentVariable(key);
     if (!string.IsNullOrEmpty(val)) return val.Trim();
@@ -64,57 +58,56 @@ app.Use(async (context, next) => {
     if (string.IsNullOrEmpty(secret)) secret = "STRAVAI_SECURE_TOKEN"; 
     if (!context.Request.Headers.TryGetValue("X-StravAI-Secret", out var providedSecret) || providedSecret != secret) {
         context.Response.StatusCode = 401;
-        await context.Response.WriteAsync("Unauthorized.");
         return;
     }
     await next();
 });
 
-app.MapGet("/health", () => Results.Ok(new { status = "healthy", version = "2.1.4_DEBUG" }));
+app.MapGet("/health", () => Results.Ok(new { status = "healthy", version = "2.1.5_FIX" }));
 app.MapGet("/logs", () => Results.Ok(logs.ToArray()));
 
 app.MapGet("/profile", async (IHttpClientFactory clientFactory) => {
     try {
         using var client = clientFactory.CreateClient();
         var token = await GetStravaAccessToken(client);
-        if (token == null) return Results.Json(new { error = "Auth Failed" }, statusCode: 401);
+        if (token == null) return Results.StatusCode(401);
 
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         var cacheId = await GetCachedSystemActivityId(client);
-        if (cacheId == null) {
-            AddLog("PROFILE_ERR: System Cache activity ID not found in Strava feed.", "WARN");
-            return Results.NotFound(new { error = "Cache not found." });
-        }
+        if (cacheId == null) return Results.NotFound(new { error = "No Cache Activity" });
         
         var actRes = await client.GetAsync($"https://www.strava.com/api/v3/activities/{cacheId}");
-        if (!actRes.IsSuccessStatusCode) {
-            AddLog($"PROFILE_ERR: Failed to fetch activity {cacheId}. Status: {actRes.StatusCode}", "ERROR");
-            return Results.StatusCode(502);
-        }
+        if (!actRes.IsSuccessStatusCode) return Results.StatusCode(502);
 
         var act = await actRes.Content.ReadFromJsonAsync<JsonElement>();
         var desc = act.TryGetProperty("description", out var dProp) ? dProp.GetString() ?? "" : "";
         
         if (!desc.Contains("---CACHE_START---") || !desc.Contains("---CACHE_END---")) {
-            AddLog($"PROFILE_ERR: Cache markers missing. Desc Length: {desc.Length}", "ERROR");
-            return Results.BadRequest(new { error = "Malformed cache markers." });
+            AddLog("PROFILE_ERR: Cache markers corrupted or missing.", "ERROR");
+            return Results.BadRequest(new { error = "Malformed markers" });
         }
         
         var jsonStr = desc.Split("---CACHE_START---")[1].Split("---CACHE_END---")[0].Trim();
-        AddLog($"PROFILE_DEBUG: Parsing JSON (Length: {jsonStr.Length}). Start: {jsonStr.Substring(0, Math.Min(20, jsonStr.Length))}...");
-
-        var node = JsonNode.Parse(jsonStr);
-        if (node is JsonObject profileObj) {
-            profileObj["lastUpdated"] = GetCetTimestamp();
-            return Results.Ok(profileObj);
-        }
         
-        var nodeType = node?.GetType().Name ?? "null";
-        AddLog($"PROFILE_ERR: Node is {nodeType}, expected JsonObject. Raw: {jsonStr}", "ERROR");
-        return Results.Json(new { error = "Cache structure error", type = nodeType }, statusCode: 500);
+        // Remove common non-JSON garbage (BOM, etc)
+        jsonStr = jsonStr.Trim('\uFEFF', '\u200B');
+
+        try {
+            var node = JsonNode.Parse(jsonStr);
+            if (node is JsonObject profileObj) {
+                profileObj["lastUpdated"] = GetCetTimestamp();
+                return Results.Ok(profileObj);
+            }
+            
+            AddLog($"PROFILE_ERR: Parsed node is {node?.GetValueKind()}, expected Object. Raw Start: {jsonStr.Substring(0, Math.Min(30, jsonStr.Length))}", "ERROR");
+            return Results.Json(new { error = "Invalid Cache Type", kind = node?.GetValueKind().ToString() }, statusCode: 500);
+        } catch (JsonException jex) {
+            AddLog($"PROFILE_ERR: JSON Syntax Error: {jex.Message}", "ERROR");
+            return Results.Json(new { error = "JSON Parse Failed", details = jex.Message }, statusCode: 500);
+        }
     } catch (Exception ex) {
-        AddLog($"PROFILE_FATAL: {ex.Message} @ {ex.StackTrace?.Split('\n')[0]}", "ERROR");
-        return Results.Json(new { error = "Internal Error", details = ex.Message }, statusCode: 500);
+        AddLog($"PROFILE_FATAL: {ex.Message}", "ERROR");
+        return Results.Json(new { error = "Internal Error" }, statusCode: 500);
     }
 });
 
@@ -134,7 +127,7 @@ app.MapPost("/audit", async (string? since, IHttpClientFactory clientFactory) =>
             int page = 1;
             var sinceTs = DateTimeOffset.Parse(since ?? "2020-01-01").ToUnixTimeSeconds();
             
-            AddLog($"AUDIT_STEP: Crawling activities since {sinceTs}...");
+            AddLog("AUDIT_STEP: Crawling training history...");
             while(page <= 25) {
                 var res = await stravaClient.GetAsync($"https://www.strava.com/api/v3/athlete/activities?per_page=200&page={page}&after={sinceTs}");
                 if (!res.IsSuccessStatusCode) break;
@@ -166,56 +159,49 @@ app.MapPost("/audit", async (string? since, IHttpClientFactory clientFactory) =>
 
             var prompt = $@"ROLE: Elite Marathon Coach. Return a JSON AthleteProfile.
 GOAL: {raceType} on {raceDate} (Target: {raceTime}).
+SCHEMA: {{
+  ""summary"": ""..."",
+  ""coachNotes"": ""..."",
+  ""milestones"": {{ ""backyardLoop"": {{ ""count"": 0, ""pb"": ""00:00"" }}, ""fiveK"": {{ ""count"": 0, ""pb"": ""00:00"" }}, ""tenK"": {{ ""count"": 0, ""pb"": ""00:00"" }}, ""twentyK"": {{ ""count"": 0, ""pb"": ""00:00"" }}, ""halfMarathon"": {{ ""count"": 0, ""pb"": ""00:00"" }}, ""marathon"": {{ ""count"": 0, ""pb"": ""00:00"" }}, ""ultra"": {{ ""count"": 0, ""pb"": ""00:00"" }}, ""other"": {{ ""count"": 0, ""pb"": ""00:00"" }} }},
+  ""triathlon"": {{ ""sprint"": 0, ""olympic"": 0, ""halfIronman"": 0, ""ironman"": 0 }},
+  ""periodic"": {{ ""week"": {{ ""distanceKm"": 0.0 }}, ""month"": {{ ""distanceKm"": 0.0 }} }},
+  ""trainingPlan"": [ {{ ""date"": ""YYYY-MM-DD"", ""type"": ""Easy"", ""title"": ""..."", ""description"": ""..."" }} ]
+}}
 DATA: {JsonSerializer.Serialize(cleanData.Take(500))}";
 
             using var aiClient = clientFactory.CreateClient("GeminiClient");
-            AddLog("AUDIT_STEP: Querying Gemini 3 Flash...");
             var aiRes = await aiClient.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={apiKey}", new { 
                 contents = new[] { new { parts = new[] { new { text = prompt } } } } 
             });
             
-            if (!aiRes.IsSuccessStatusCode) {
-                AddLog($"AI_FAIL: {aiRes.StatusCode}", "ERROR");
-                return;
-            }
+            if (!aiRes.IsSuccessStatusCode) return;
             
             var aiResJson = await aiRes.Content.ReadFromJsonAsync<JsonElement>();
             var aiText = aiResJson.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString() ?? "";
             
-            // Refined JSON Extraction
             int jsonStart = aiText.IndexOf("{");
             int jsonEnd = aiText.LastIndexOf("}");
-            if (jsonStart != -1 && jsonEnd != -1 && jsonEnd > jsonStart) {
-                aiText = aiText.Substring(jsonStart, jsonEnd - jsonStart + 1);
-            }
+            if (jsonStart != -1 && jsonEnd != -1) aiText = aiText.Substring(jsonStart, jsonEnd - jsonStart + 1);
 
-            try {
-                var node = JsonNode.Parse(aiText);
-                if (node is JsonObject profileObj) {
-                    var stravaQuota = new { dailyUsed = 25, dailyLimit = 1000, minuteUsed = 0, minuteLimit = 15, resetAt = DateTime.UtcNow.AddDays(1).ToString("O") };
-                    var geminiQuota = new { dailyUsed = 1, dailyLimit = 1500, minuteUsed = 0, minuteLimit = 15, resetAt = DateTime.UtcNow.AddDays(1).ToString("O") };
-                    
-                    profileObj["stravaQuota"] = JsonNode.Parse(JsonSerializer.Serialize(stravaQuota));
-                    profileObj["geminiQuota"] = JsonNode.Parse(JsonSerializer.Serialize(geminiQuota));
-                    
-                    var jsonToSave = profileObj.ToJsonString();
-                    var finalDesc = $"[StravAI System Cache]\n---CACHE_START---\n{jsonToSave}\n---CACHE_END---\nUpdated: {GetCetTimestamp()}";
-                    
-                    AddLog($"AUDIT_DEBUG: Saving JSON (Length: {jsonToSave.Length}) to Strava.");
-                    
-                    var cacheId = await GetCachedSystemActivityId(stravaClient);
-                    if (cacheId == null) {
-                        await stravaClient.PostAsJsonAsync("https://www.strava.com/api/v3/activities", new { name="[StravAI] System Cache", type="Run", start_date_local=DateTime.UtcNow.ToString("O"), elapsed_time=1, description=finalDesc, @private=true });
-                    } else {
-                        var updateRes = await stravaClient.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{cacheId}", new { description = finalDesc });
-                        if (!updateRes.IsSuccessStatusCode) AddLog($"AUDIT_ERR: Strava Save Failed: {updateRes.StatusCode}", "ERROR");
-                    }
-                    AddLog("AUDIT_SUCCESS: Sync complete.", "SUCCESS");
+            var node = JsonNode.Parse(aiText);
+            if (node is JsonObject profileObj) {
+                var stravaQuota = new { dailyUsed = 30, dailyLimit = 1000, minuteUsed = 0, minuteLimit = 15, resetAt = DateTime.UtcNow.AddDays(1).ToString("O") };
+                var geminiQuota = new { dailyUsed = 1, dailyLimit = 1500, minuteUsed = 0, minuteLimit = 15, resetAt = DateTime.UtcNow.AddDays(1).ToString("O") };
+                
+                profileObj["stravaQuota"] = JsonNode.Parse(JsonSerializer.Serialize(stravaQuota));
+                profileObj["geminiQuota"] = JsonNode.Parse(JsonSerializer.Serialize(geminiQuota));
+                
+                var finalDesc = $"[StravAI System Cache]\n---CACHE_START---\n{profileObj.ToJsonString()}\n---CACHE_END---\nUpdated: {GetCetTimestamp()}";
+                
+                var cacheId = await GetCachedSystemActivityId(stravaClient);
+                if (cacheId == null) {
+                    await stravaClient.PostAsJsonAsync("https://www.strava.com/api/v3/activities", new { name="[StravAI] System Cache", type="Run", start_date_local=DateTime.UtcNow.ToString("O"), elapsed_time=1, description=finalDesc, @private=true });
                 } else {
-                    AddLog($"AUDIT_FAIL: AI returned {node?.GetType().Name} instead of Object.", "ERROR");
+                    await stravaClient.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{cacheId}", new { description = finalDesc });
                 }
-            } catch (Exception parseEx) {
-                AddLog($"AUDIT_FAIL: JSON Parse Error: {parseEx.Message}. Raw: {aiText.Substring(0, Math.Min(50, aiText.Length))}", "ERROR");
+                AddLog("AUDIT_SUCCESS: System Intelligence updated and cached.", "SUCCESS");
+            } else {
+                AddLog($"AUDIT_FAIL: AI response kind was {node?.GetValueKind()}, not Object.", "ERROR");
             }
             _cacheExpiry = DateTime.MinValue; 
         } catch (Exception ex) { AddLog($"AUDIT_FATAL: {ex.Message}", "ERROR"); }
