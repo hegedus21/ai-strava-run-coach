@@ -24,11 +24,12 @@ var lastMinute = -1;
 var logs = new ConcurrentQueue<string>();
 
 // Rate-Limit Mitigation: Cache the Strava activity list and cache ID for 10 minutes
-private static List<JsonElement>? _activitiesCache;
-private static long? _cachedSystemActivityId;
-private static DateTime _cacheExpiry = DateTime.MinValue;
-private static string? _cachedToken;
-private static DateTime _tokenExpiry = DateTime.MinValue;
+// NOTE: Removed 'private static' because top-level statements do not support them.
+List<JsonElement>? _activitiesCache = null;
+long? _cachedSystemActivityId = null;
+DateTime _cacheExpiry = DateTime.MinValue;
+string? _cachedToken = null;
+DateTime _tokenExpiry = DateTime.MinValue;
 
 void AddLog(string message, string level = "INFO") {
     var timestamp = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
@@ -91,7 +92,7 @@ async Task<long?> GetCachedSystemActivityId(HttpClient client) {
 
 // --- CORE ENDPOINTS ---
 
-app.MapGet("/health", () => Results.Ok(new { status = "healthy", engine = "StravAI_v1.7.0_Optimized" }));
+app.MapGet("/health", () => Results.Ok(new { status = "healthy", engine = "StravAI_v1.7.1_Fixed" }));
 app.MapGet("/logs", () => Results.Ok(logs.ToArray()));
 
 app.MapGet("/profile", async (IHttpClientFactory clientFactory) => {
@@ -103,7 +104,6 @@ app.MapGet("/profile", async (IHttpClientFactory clientFactory) => {
     var id = await GetCachedSystemActivityId(client);
     if (id == null) return Results.NotFound("System cache activity not found. Please trigger an audit.");
     
-    // Consolidation: Single fetch for the cache activity containing profile AND quota
     var act = await client.GetFromJsonAsync<JsonElement>($"https://www.strava.com/api/v3/activities/{id}");
     var desc = act.GetProperty("description").GetString() ?? "";
     
@@ -112,7 +112,6 @@ app.MapGet("/profile", async (IHttpClientFactory clientFactory) => {
     var jsonStr = desc.Split("---CACHE_START---")[1].Split("---CACHE_END---")[0];
     var profile = JsonNode.Parse(jsonStr);
     
-    // Extract Quota from the same description to avoid redundant API calls
     JsonNode? quotaNode = null;
     if (desc.Contains("---QUOTA_START---")) {
         var qStr = desc.Split("---QUOTA_START---")[1].Split("---QUOTA_END---")[0];
@@ -175,21 +174,19 @@ app.MapPost("/audit", async (string? since, IHttpClientFactory clientFactory) =>
 
             var apiKey = GetEnv("GEMINI_API_KEY");
             
-            // Manual quota tracking inside the cache
             var cacheId = await GetCachedSystemActivityId(client);
             var cacheAct = (cacheId != null ? (await client.GetFromJsonAsync<JsonElement>($"https://www.strava.com/api/v3/activities/{cacheId}")) : (JsonElement?)null);
             var cacheDesc = cacheAct?.TryGetProperty("description", out var cd) == true ? cd.GetString() ?? "" : "";
             
             int currentUsed = 0;
-            string resetAt = DateTime.UtcNow.AddDays(1).ToString("O");
+            string resetAtStr = DateTime.UtcNow.AddDays(1).ToString("O");
             if (cacheDesc.Contains("---QUOTA_START---")) {
                 var qStr = cacheDesc.Split("---QUOTA_START---")[1].Split("---QUOTA_END---")[0];
                 var qObj = JsonSerializer.Deserialize<JsonElement>(qStr);
                 currentUsed = qObj.GetProperty("dailyUsed").GetInt32();
-                resetAt = qObj.GetProperty("resetAt").GetString() ?? resetAt;
+                resetAtStr = qObj.GetProperty("resetAt").GetString() ?? resetAtStr;
             }
 
-            // AI Call
             AddLog("AI_INFERENCE: Processing data patterns...");
             var aiRes = await client.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={apiKey}", new { contents = new[] { new { parts = new[] { new { text = prompt } } } } });
             var aiResJson = await aiRes.Content.ReadFromJsonAsync<JsonElement>();
@@ -198,9 +195,8 @@ app.MapPost("/audit", async (string? since, IHttpClientFactory clientFactory) =>
             if (aiText!.Contains("```json")) aiText = aiText.Split("```json")[1].Split("```")[0].Trim();
             else if (aiText.Contains("```")) aiText = aiText.Split("```")[1].Split("```")[0].Trim();
 
-            // Persist
             currentUsed++;
-            var quotaStr = $"---QUOTA_START---\n{JsonSerializer.Serialize(new { dailyUsed = currentUsed, resetAt })}\n---QUOTA_END---";
+            var quotaStr = $"---QUOTA_START---\n{JsonSerializer.Serialize(new { dailyUsed = currentUsed, resetAt = resetAtStr })}\n---QUOTA_END---";
             var finalDesc = $"[StravAI System Cache]\n---CACHE_START---\n{aiText}\n---CACHE_END---\n{quotaStr}\nUpdated: {GetCetTimestamp()}";
 
             if (cacheId == null) {
@@ -212,7 +208,7 @@ app.MapPost("/audit", async (string? since, IHttpClientFactory clientFactory) =>
             }
             
             AddLog("AUDIT_SUCCESS: System Intelligence Refreshed.");
-            _cacheExpiry = DateTime.MinValue; // Force refresh on next poll
+            _cacheExpiry = DateTime.MinValue; 
         } catch (Exception ex) { AddLog($"AUDIT_ERR: {ex.Message}", "ERROR"); }
     });
     return Results.Accepted();
