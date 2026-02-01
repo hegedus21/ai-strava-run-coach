@@ -25,7 +25,7 @@ var app = builder.Build();
 app.UseCors("AllowAll");
 
 // ENDPOINTS
-app.MapGet("/health", () => Results.Ok(new { status = "healthy", version = "2.1.7_DEBUG_FIX" }));
+app.MapGet("/health", () => Results.Ok(new { status = "healthy", version = "2.1.8_SILENT" }));
 app.MapGet("/logs", () => Results.Ok(SystemState.Logs.ToArray()));
 
 app.MapGet("/profile", async (IHttpClientFactory clientFactory) =>
@@ -48,85 +48,67 @@ app.MapGet("/profile", async (IHttpClientFactory clientFactory) =>
 
         if (!desc.Contains("---CACHE_START---") || !desc.Contains("---CACHE_END---"))
         {
-            SystemState.AddLog($"PROFILE_ERR: Markers missing. Desc size: {desc.Length}", "ERROR");
             return Results.BadRequest(new { error = "Malformed markers" });
         }
 
         var jsonStr = desc.Split("---CACHE_START---")[1].Split("---CACHE_END---")[0].Trim();
-        jsonStr = jsonStr.Trim('\uFEFF', '\u200B'); // Remove BOM and zero-width spaces
-
-        SystemState.AddLog($"PROFILE_DEBUG: Raw JSON Start: {jsonStr.Substring(0, Math.Min(50, jsonStr.Length))}");
+        jsonStr = jsonStr.Trim('\uFEFF', '\u200B'); 
 
         try
         {
             var node = JsonNode.Parse(jsonStr);
-            if (node == null) 
-            {
-                SystemState.AddLog("PROFILE_ERR: JsonNode.Parse returned null.", "ERROR");
-                return Results.Json(new { error = "Null Node" }, statusCode: 500);
-            }
-
-            // Diagnostic: Log what we actually got
-            var kind = node.GetValueKind();
-            SystemState.AddLog($"PROFILE_DEBUG: Node Type: {node.GetType().Name}, ValueKind: {kind}");
-
             if (node is JsonObject profileObj)
             {
-                // Logic check: If the AI nested everything under a key like "athlete_status"
+                // Handle occasional AI nesting
                 if (profileObj.Count == 1 && (profileObj.ContainsKey("athlete_status") || profileObj.ContainsKey("profile")))
                 {
-                    SystemState.AddLog("PROFILE_DEBUG: Detected nested root object. Flattening...");
                     var firstKey = profileObj.First().Key;
-                    if (profileObj[firstKey] is JsonObject nested)
-                    {
-                        profileObj = nested;
-                    }
+                    if (profileObj[firstKey] is JsonObject nested) profileObj = nested;
                 }
 
                 profileObj["lastUpdated"] = GetCetTimestamp();
                 return Results.Ok(profileObj);
             }
-
-            SystemState.AddLog($"PROFILE_ERR: Expected JsonObject but got {kind}. Content: {jsonStr.Substring(0, Math.Min(200, jsonStr.Length))}", "ERROR");
-            return Results.Json(new { error = "Invalid Cache Structure", kind = kind.ToString() }, statusCode: 500);
+            return Results.Json(new { error = "Invalid Structure", kind = node?.GetValueKind().ToString() }, statusCode: 500);
         }
-        catch (JsonException jex)
+        catch (JsonException)
         {
-            SystemState.AddLog($"PROFILE_ERR: JSON Syntax: {jex.Message}. Offset: {jex.BytePositionInLine}", "ERROR");
-            return Results.Json(new { error = "JSON Parse Failed", details = jex.Message }, statusCode: 500);
+            return Results.Json(new { error = "JSON Parse Failed" }, statusCode: 500);
         }
     }
     catch (Exception ex)
     {
-        SystemState.AddLog($"PROFILE_FATAL: {ex.GetType().Name}: {ex.Message}", "ERROR");
-        return Results.Json(new { error = "Internal Error", type = ex.GetType().Name }, statusCode: 500);
+        SystemState.AddLog($"PROFILE_FATAL: {ex.Message}", "ERROR");
+        return Results.Json(new { error = "Internal Error" }, statusCode: 500);
     }
 });
 
 app.MapPost("/audit", async (string? since, IHttpClientFactory clientFactory) =>
 {
-    SystemState.AddLog("AUDIT_ENGINE: Starting deep physiological audit sequence.");
+    SystemState.AddLog("AUDIT_ENGINE: Audit sequence initiated by user.");
     _ = Task.Run(async () =>
     {
         try
         {
-            var apiKey = GetEnv("GEMINI_API_KEY");
+            var apiKey = GetEnv("API_KEY");
+            if (string.IsNullOrEmpty(apiKey)) apiKey = GetEnv("GEMINI_API_KEY");
+            
             if (string.IsNullOrEmpty(apiKey))
             {
-                SystemState.AddLog("AUTH_ERR: No Gemini API Key provided in environment.", "ERROR");
+                SystemState.AddLog("AUTH_ERR: Gemini API key missing (tried API_KEY and GEMINI_API_KEY).", "ERROR");
                 return;
             }
 
             using var stravaClient = clientFactory.CreateClient();
             var token = await GetStravaAccessToken(stravaClient);
-            if (token == null) return;
+            if (token == null) { SystemState.AddLog("AUTH_ERR: Strava token refresh failed.", "ERROR"); return; }
             stravaClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
             var allActivities = new List<JsonElement>();
             int page = 1;
             var sinceTs = DateTimeOffset.Parse(since ?? "2020-01-01").ToUnixTimeSeconds();
 
-            SystemState.AddLog("AUDIT_STEP: Syncing activities from Strava Cloud...");
+            SystemState.AddLog("AUDIT_STEP: Syncing historical activities...");
             while (page <= 25)
             {
                 var res = await stravaClient.GetAsync($"https://www.strava.com/api/v3/athlete/activities?per_page=200&page={page}&after={sinceTs}");
@@ -159,9 +141,8 @@ app.MapPost("/audit", async (string? since, IHttpClientFactory clientFactory) =>
             var raceDate = GetEnv("GOAL_RACE_DATE") ?? DateTime.UtcNow.AddMonths(3).ToString("yyyy-MM-dd");
             var raceTime = GetEnv("GOAL_RACE_TIME") ?? "3:30:00";
 
-            var prompt = $@"ROLE: Elite Marathon Coach. Analyze the training data and return a JSON AthleteProfile. 
+            var prompt = $@"Return a JSON AthleteProfile. NO NESTING. NO WRAPPING.
 GOAL: {raceType} on {raceDate} (Target: {raceTime}).
-RULES: Return ONLY the JSON object. Do not nest it inside other keys.
 DATA: {JsonSerializer.Serialize(cleanData.Take(500))}";
 
             using var aiClient = clientFactory.CreateClient("GeminiClient");
@@ -172,14 +153,13 @@ DATA: {JsonSerializer.Serialize(cleanData.Take(500))}";
 
             if (!aiRes.IsSuccessStatusCode)
             {
-                SystemState.AddLog($"AI_ERR: API responded with status {aiRes.StatusCode}", "ERROR");
+                SystemState.AddLog($"AI_ERR: Status {aiRes.StatusCode}", "ERROR");
                 return;
             }
 
             var aiResJson = await aiRes.Content.ReadFromJsonAsync<JsonElement>();
             var aiText = aiResJson.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString() ?? "";
 
-            // Precise JSON Extraction
             int jsonStart = aiText.IndexOf("{");
             int jsonEnd = aiText.LastIndexOf("}");
             if (jsonStart != -1 && jsonEnd != -1) aiText = aiText.Substring(jsonStart, jsonEnd - jsonStart + 1);
@@ -187,31 +167,17 @@ DATA: {JsonSerializer.Serialize(cleanData.Take(500))}";
             var node = JsonNode.Parse(aiText);
             if (node is JsonObject profileObj)
             {
-                // Quota Simulation
-                var stravaQuota = new { dailyUsed = 35, dailyLimit = 1000, minuteUsed = 0, minuteLimit = 15, resetAt = DateTime.UtcNow.AddDays(1).ToString("O") };
-                var geminiQuota = new { dailyUsed = 1, dailyLimit = 1500, minuteUsed = 0, minuteLimit = 15, resetAt = DateTime.UtcNow.AddDays(1).ToString("O") };
-
-                profileObj["stravaQuota"] = JsonNode.Parse(JsonSerializer.Serialize(stravaQuota));
-                profileObj["geminiQuota"] = JsonNode.Parse(JsonSerializer.Serialize(geminiQuota));
-
                 var finalDesc = $"[StravAI System Cache]\n---CACHE_START---\n{profileObj.ToJsonString()}\n---CACHE_END---\nUpdated: {GetCetTimestamp()}";
-
                 var cacheId = await GetCachedSystemActivityId(stravaClient);
+                
                 if (cacheId == null)
-                {
                     await stravaClient.PostAsJsonAsync("https://www.strava.com/api/v3/activities", new { name = "[StravAI] System Cache", type = "Run", start_date_local = DateTime.UtcNow.ToString("O"), elapsed_time = 1, description = finalDesc, @private = true });
-                }
                 else
-                {
                     await stravaClient.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{cacheId}", new { description = finalDesc });
-                }
-                SystemState.AddLog("AUDIT_SUCCESS: Intelligence cache updated successfully.", "SUCCESS");
+                
+                SystemState.AddLog("AUDIT_SUCCESS: Cache updated. Audit cycle complete.", "SUCCESS");
             }
-            else
-            {
-                SystemState.AddLog($"AUDIT_ERR: AI output type was {node?.GetValueKind()}, not Object.", "ERROR");
-            }
-            SystemState.CacheExpiry = DateTime.MinValue; // Invalidate cache to force reload
+            SystemState.CacheExpiry = DateTime.MinValue; 
         }
         catch (Exception ex)
         {
@@ -223,7 +189,7 @@ DATA: {JsonSerializer.Serialize(cleanData.Take(500))}";
 
 app.Run();
 
-// HELPERS (Static Methods)
+// HELPERS
 async Task<string?> GetStravaAccessToken(HttpClient client)
 {
     try
@@ -282,13 +248,9 @@ string GetCetTimestamp()
             : TimeZoneInfo.FindSystemTimeZoneById("Europe/Berlin");
         return TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, tzi).ToString("dd/MM/yyyy HH:mm:ss");
     }
-    catch
-    {
-        return DateTime.UtcNow.AddHours(1).ToString("dd/MM/yyyy HH:mm:ss");
-    }
+    catch { return DateTime.UtcNow.AddHours(1).ToString("dd/MM/yyyy HH:mm:ss"); }
 }
 
-// TYPES & STATE
 public static class SystemState
 {
     public static long? CachedSystemActivityId { get; set; }
