@@ -10,7 +10,9 @@ using System.Text.Json.Nodes;
 
 var builder = WebApplication.CreateBuilder(args);
 var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
-builder.WebHost.UseUrls($"http://*:{port}");
+
+// Use 0.0.0.0 for better container compatibility (Koyeb/Render/Docker)
+builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
 
 builder.Services.AddHttpClient();
 builder.Services.AddHttpClient("GeminiClient");
@@ -24,18 +26,44 @@ builder.Services.AddCors(options => options.AddPolicy("AllowAll", p => p
 var app = builder.Build();
 app.UseCors("AllowAll");
 
-// Startup Verification
+// --- STARTUP DIAGNOSTICS ---
+SystemState.AddLog($"SYSTEM_BOOT: Target Port: {port}");
 SystemState.AddLog("SYSTEM_BOOT: Verifying environment configuration...");
+
 string[] criticalKeys = { "STRAVA_CLIENT_ID", "STRAVA_CLIENT_SECRET", "STRAVA_REFRESH_TOKEN", "API_KEY", "GEMINI_API_KEY" };
 foreach(var key in criticalKeys) {
-    var val = GetEnv(key);
+    var source = "Environment";
+    var val = Environment.GetEnvironmentVariable(key);
     if (string.IsNullOrEmpty(val)) {
-        SystemState.AddLog($"CONFIG_CHECK: {key} is MISSING", "WARNING");
+        val = app.Configuration[key];
+        source = "appsettings.json";
+    }
+
+    if (string.IsNullOrEmpty(val)) {
+        SystemState.AddLog($"CONFIG_CHECK: {key} is MISSING (Checked Env and Config)", "WARNING");
     } else {
         var masked = val.Length > 8 ? $"{val[..4]}...{val[^4..]}" : "****";
-        SystemState.AddLog($"CONFIG_CHECK: {key} is LOADED ({masked})");
+        SystemState.AddLog($"CONFIG_CHECK: {key} is LOADED from {source} ({masked})");
     }
 }
+
+// --- ROOT & HEALTH HANDLERS ---
+// Many platforms kill the app if '/' doesn't return 200
+app.MapGet("/", () => Results.Ok(new { 
+    service = "StravAI Backend", 
+    status = "running", 
+    timestamp = DateTime.UtcNow,
+    diagnostics = "/health"
+}));
+
+app.MapGet("/health", () => Results.Ok(new { 
+    status = "healthy", 
+    version = "2.3.5_STABILITY_PATCH",
+    os = RuntimeInformation.OSDescription,
+    arch = RuntimeInformation.OSArchitecture.ToString()
+}));
+
+app.MapGet("/logs", () => Results.Ok(SystemState.Logs.ToArray()));
 
 // --- WEBHOOK MANAGEMENT ---
 
@@ -73,17 +101,7 @@ app.MapPost("/webhook/register", async (IHttpClientFactory clientFactory, [FromQ
     } catch (Exception ex) { return Results.Problem(ex.Message); }
 });
 
-app.MapDelete("/webhook/unregister/{id}", async (int id, IHttpClientFactory clientFactory) => {
-    try {
-        using var client = clientFactory.CreateClient();
-        var clientId = GetEnv("STRAVA_CLIENT_ID");
-        var clientSecret = GetEnv("STRAVA_CLIENT_SECRET");
-        var res = await client.DeleteAsync($"https://www.strava.com/api/v3/push_subscriptions/{id}?client_id={clientId}&client_secret={clientSecret}");
-        return res.IsSuccessStatusCode ? Results.Ok() : Results.BadRequest();
-    } catch (Exception ex) { return Results.Problem(ex.Message); }
-});
-
-// --- CORE WEBHOOK RECEIVER ---
+// --- WEBHOOK RECEIVER ---
 
 app.MapGet("/webhook", ([FromQuery(Name = "hub.mode")] string mode, [FromQuery(Name = "hub.challenge")] string challenge, [FromQuery(Name = "hub.verify_token")] string verifyToken) => {
     var secret = GetEnv("STRAVA_VERIFY_TOKEN") ?? "STRAVAI_SECURE_TOKEN";
@@ -133,10 +151,7 @@ app.MapPost("/webhook", async (HttpContext context, IHttpClientFactory clientFac
     return Results.Ok();
 });
 
-// --- SERVICE ENDPOINTS ---
-
-app.MapGet("/health", () => Results.Ok(new { status = "healthy", version = "2.3.4_AUTH_FIX" }));
-app.MapGet("/logs", () => Results.Ok(SystemState.Logs.ToArray()));
+// --- PROFILE & AUDIT ---
 
 app.MapGet("/profile", async (IHttpClientFactory clientFactory) => {
     try {
@@ -199,6 +214,11 @@ app.MapPost("/audit", async (IHttpClientFactory clientFactory) => {
         } catch (Exception ex) { SystemState.AddLog($"AUDIT_FATAL: {ex.GetType().Name} - {ex.Message}", "ERROR"); }
     });
     return Results.Accepted();
+});
+
+// Start the app
+app.Lifetime.ApplicationStopping.Register(() => {
+    SystemState.AddLog("SYSTEM_SHUTDOWN: Termination signal received.");
 });
 
 app.Run();
@@ -269,29 +289,28 @@ string ResolveApiKey() {
 
 string SafeExtractText(JsonElement root) {
     try {
-        // Handle Google Error Object explicitly
         if (root.TryGetProperty("error", out var errorObj)) {
             var msg = errorObj.TryGetProperty("message", out var m) ? m.GetString() : "Unknown Google API error";
             SystemState.AddLog($"AI_API_ERROR: {msg}", "ERROR");
             return "";
         }
 
-        var candidates = GetRequiredProperty(root, "candidates", "SafeExtractText[Root]");
+        var candidates = GetRequiredProperty(root, "candidates", "AI.Response");
         if (candidates.ValueKind != JsonValueKind.Array || candidates.GetArrayLength() == 0) {
-            SystemState.AddLog("AI_PARSE: 'candidates' is empty or not an array.", "ERROR");
+            SystemState.AddLog("AI_PARSE: 'candidates' is empty.", "ERROR");
             return "";
         }
         
         var first = candidates[0];
-        var content = GetRequiredProperty(first, "content", "SafeExtractText[Candidate]");
-        var parts = GetRequiredProperty(content, "parts", "SafeExtractText[Content]");
+        var content = GetRequiredProperty(first, "content", "AI.Candidate");
+        var parts = GetRequiredProperty(content, "parts", "AI.Content");
         
         if (parts.ValueKind != JsonValueKind.Array || parts.GetArrayLength() == 0) {
-            SystemState.AddLog("AI_PARSE: 'parts' is empty or not an array.", "ERROR");
+            SystemState.AddLog("AI_PARSE: 'parts' is empty.", "ERROR");
             return "";
         }
         
-        var textProp = GetRequiredProperty(parts[0], "text", "SafeExtractText[Part]");
+        var textProp = GetRequiredProperty(parts[0], "text", "AI.Part");
         return textProp.GetString() ?? "";
     } catch (Exception ex) {
         SystemState.AddLog($"PARSE_FATAL: {ex.Message}", "ERROR");
@@ -311,7 +330,8 @@ JsonElement GetRequiredProperty(JsonElement element, string name, string context
     var raw = element.ToString();
     var snippet = raw.Length > 200 ? raw[..200] + "..." : raw;
     
-    throw new KeyNotFoundException($"[{context}] MISSING KEY: '{name}'. Available keys: [{available}]. Raw Data: {snippet}");
+    // This solves your question: "What was it looking for? what does the dictionary contain?"
+    throw new KeyNotFoundException($"[{context}] FAILED to find key '{name}'. Available keys here: [{available}]. Data snippet: {snippet}");
 }
 
 async Task<string?> GetStravaAccessToken(HttpClient client) {
