@@ -11,6 +11,9 @@ using System.Text.Json.Nodes;
 var builder = WebApplication.CreateBuilder(args);
 var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
 
+// Ensure we listen on all interfaces for container compatibility
+builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
+
 builder.Services.AddHttpClient();
 builder.Services.AddHttpClient("GeminiClient");
 builder.Services.AddLogging();
@@ -18,7 +21,7 @@ builder.Services.AddCors(options => options.AddPolicy("AllowAll", p => p.AllowAn
 
 var app = builder.Build();
 
-// CRITICAL: Override platform defaults (like http://*) with http://0.0.0.0
+// Override any platform-injected defaults to ensure we use 0.0.0.0
 app.Urls.Clear();
 app.Urls.Add($"http://0.0.0.0:{port}");
 
@@ -29,18 +32,18 @@ app.Use(async (context, next) => {
     try {
         await next();
     } catch (KeyNotFoundException ex) {
-        SystemState.AddLog($"JSON_MAP_ERROR: A required key was missing in the data dictionary.", "ERROR");
+        SystemState.AddLog($"JSON_MAP_ERROR: Required data key missing.", "ERROR");
         SystemState.AddLog($"DETAILS: {ex.Message}", "ERROR");
         context.Response.StatusCode = 500;
-        await context.Response.WriteAsJsonAsync(new { error = "Data Mapping Error", details = ex.Message });
+        await context.Response.WriteAsJsonAsync(new { error = "Mapping Error", details = ex.Message });
     } catch (Exception ex) {
-        SystemState.AddLog($"UNHANDLED_EXCEPTION: {ex.GetType().Name} - {ex.Message}", "ERROR");
+        SystemState.AddLog($"CRITICAL_FAULT: {ex.GetType().Name} - {ex.Message}", "ERROR");
         throw;
     }
 });
 
-// --- STARTUP DIAGNOSTICS ---
-SystemState.AddLog($"SYSTEM_BOOT: Binding to http://0.0.0.0:{port}");
+// --- STARTUP LOGS ---
+SystemState.AddLog($"SYSTEM_BOOT: Listening on http://0.0.0.0:{port}");
 string[] criticalKeys = { "STRAVA_CLIENT_ID", "STRAVA_CLIENT_SECRET", "STRAVA_REFRESH_TOKEN", "API_KEY", "GEMINI_API_KEY" };
 foreach(var key in criticalKeys) {
     var val = GetEnv(key, app);
@@ -52,11 +55,8 @@ foreach(var key in criticalKeys) {
     }
 }
 
-// --- HEALTH HANDLERS (PLATFORM SURVIVAL) ---
-app.MapGet("/", () => {
-    return Results.Ok(new { service = "StravAI", status = "online", uptime = DateTime.UtcNow });
-});
-
+// --- HEALTH HANDLERS (Vital for platform survival) ---
+app.MapGet("/", () => Results.Ok(new { service = "StravAI", status = "online", uptime = DateTime.UtcNow }));
 app.MapGet("/health", () => Results.Ok(new { status = "healthy", timestamp = DateTime.UtcNow }));
 app.MapGet("/logs", () => Results.Ok(SystemState.Logs.ToArray()));
 
@@ -128,9 +128,12 @@ app.MapGet("/profile", async (IHttpClientFactory clientFactory) => {
     client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
     var res = await client.GetAsync("https://www.strava.com/api/v3/athlete/activities?per_page=100");
     var acts = await res.Content.ReadFromJsonAsync<List<JsonElement>>();
+    
+    // FIX: Handle Nullable JsonElement correctly for build
     var cache = acts?.FirstOrDefault(a => a.GetProperty("name").GetString() == "[StravAI] System Cache");
-    if (cache.ValueKind == JsonValueKind.Undefined) return Results.NotFound();
-    var detail = await client.GetAsync($"https://www.strava.com/api/v3/activities/{cache.GetProperty("id").GetInt64()}");
+    if (!cache.HasValue || cache.Value.ValueKind == JsonValueKind.Undefined) return Results.NotFound();
+    
+    var detail = await client.GetAsync($"https://www.strava.com/api/v3/activities/{cache.Value.GetProperty("id").GetInt64()}");
     var act = await detail.Content.ReadFromJsonAsync<JsonElement>();
     var desc = act.GetProperty("description").GetString() ?? "";
     var json = desc.Split("---CACHE_START---")[1].Split("---CACHE_END---")[0];
@@ -152,9 +155,14 @@ app.MapPost("/audit", async (IHttpClientFactory clientFactory) => {
             int s = text.IndexOf("{"); int e = text.LastIndexOf("}");
             var profile = text.Substring(s, e - s + 1);
             var finalDesc = $"[StravAI System Cache]\n---CACHE_START---\n{profile}\n---CACHE_END---\nUpdated: {DateTime.UtcNow}";
+            
+            // FIX: Handle Nullable JsonElement correctly for build
             var cache = history?.FirstOrDefault(a => a.GetProperty("name").GetString() == "[StravAI] System Cache");
-            if (cache?.ValueKind == JsonValueKind.Object) await client.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{cache.Value.GetProperty("id").GetInt64()}", new { description = finalDesc });
-            else await client.PostAsJsonAsync("https://www.strava.com/api/v3/activities", new { name = "[StravAI] System Cache", type = "Run", start_date_local = DateTime.UtcNow.ToString("O"), elapsed_time = 1, description = finalDesc, @private = true });
+            if (cache.HasValue && cache.Value.ValueKind == JsonValueKind.Object) 
+                await client.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{cache.Value.GetProperty("id").GetInt64()}", new { description = finalDesc });
+            else 
+                await client.PostAsJsonAsync("https://www.strava.com/api/v3/activities", new { name = "[StravAI] System Cache", type = "Run", start_date_local = DateTime.UtcNow.ToString("O"), elapsed_time = 1, description = finalDesc, @private = true });
+            
             SystemState.AddLog("AUDIT: Success.", "SUCCESS");
         } catch (Exception ex) { SystemState.AddLog($"AUDIT_FAIL: {ex.Message}", "ERROR"); }
     });
@@ -183,7 +191,7 @@ string SafeExtractText(JsonElement root) {
 JsonElement GetRequiredProperty(JsonElement element, string name, string context) {
     if (element.TryGetProperty(name, out var prop)) return prop;
     var keys = string.Join(", ", element.ValueKind == JsonValueKind.Object ? element.EnumerateObject().Select(p => p.Name) : new[] { "Not an Object" });
-    throw new KeyNotFoundException($"[{context}] Could not find '{name}'. Available keys at this level are: [{keys}]. Raw data: {element}");
+    throw new KeyNotFoundException($"[{context}] Could not find key '{name}'. Found keys: [{keys}]. Raw: {element}");
 }
 
 async Task<string?> GetStravaAccessToken(HttpClient client, WebApplication app) {
