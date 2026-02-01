@@ -16,16 +16,18 @@ builder.Services.AddHttpClient();
 builder.Services.AddHttpClient("GeminiClient");
 builder.Services.AddLogging();
 
-// Refined CORS: Allow hegedus21.github.io specifically and all other origins for flexibility during setup
-builder.Services.AddCors(options => options.AddPolicy("StravAIPolicy", p => p
-    .SetIsOriginAllowed(_ => true) // More permissive for dynamic deployment environments
+// Highly permissive CORS policy to resolve connectivity issues between Koyeb and GitHub Pages
+builder.Services.AddCors(options => options.AddPolicy("AllowAll", p => p
+    .AllowAnyOrigin()
     .AllowAnyMethod()
-    .AllowAnyHeader()
-    .AllowCredentials()));
+    .AllowAnyHeader()));
 
 var app = builder.Build();
 
-// LOGGING SETUP
+// CRITICAL: CORS must be the absolute first middleware to handle preflight and error responses
+app.UseCors("AllowAll");
+
+// LOGGING SYSTEM
 var logs = new ConcurrentQueue<string>();
 void AddLog(string message, string level = "INFO") {
     var timestamp = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
@@ -40,8 +42,6 @@ long? _cachedSystemActivityId = null;
 DateTime _cacheExpiry = DateTime.MinValue;
 string? _cachedToken = null;
 DateTime _tokenExpiry = DateTime.MinValue;
-
-app.UseCors("StravAIPolicy");
 
 // HELPER: Get ENV or Config
 string GetEnv(string key) {
@@ -66,7 +66,7 @@ string GetCetTimestamp() {
 app.Use(async (context, next) => {
     var path = context.Request.Path.Value?.ToLower() ?? "";
     
-    // Explicitly handle preflight
+    // Explicitly handle preflight (though UseCors usually handles this)
     if (context.Request.Method == "OPTIONS") {
         context.Response.StatusCode = 200;
         return;
@@ -75,7 +75,7 @@ app.Use(async (context, next) => {
     if (path == "/" || path == "/health") { await next(); return; }
     
     var secret = GetEnv("STRAVA_VERIFY_TOKEN");
-    if (string.IsNullOrEmpty(secret)) secret = "STRAVAI_SECURE_TOKEN"; // Fallback for local dev
+    if (string.IsNullOrEmpty(secret)) secret = "STRAVAI_SECURE_TOKEN"; 
 
     if (!context.Request.Headers.TryGetValue("X-StravAI-Secret", out var providedSecret) || providedSecret != secret) {
         AddLog($"AUTH_DENIED: Path={path} RemoteIp={context.Connection.RemoteIpAddress}", "WARN");
@@ -87,7 +87,7 @@ app.Use(async (context, next) => {
 });
 
 // ENDPOINTS
-app.MapGet("/health", () => Results.Ok(new { status = "healthy", version = "2.1.1_DEBUG" }));
+app.MapGet("/health", () => Results.Ok(new { status = "healthy", version = "2.1.2_FIX" }));
 app.MapGet("/logs", () => Results.Ok(logs.ToArray()));
 
 app.MapGet("/profile", async (IHttpClientFactory clientFactory) => {
@@ -122,12 +122,16 @@ app.MapGet("/profile", async (IHttpClientFactory clientFactory) => {
         }
         
         var jsonStr = desc.Split("---CACHE_START---")[1].Split("---CACHE_END---")[0].Trim();
-        var profileNode = JsonNode.Parse(jsonStr);
+        var node = JsonNode.Parse(jsonStr);
         
-        if (profileNode == null) throw new Exception("Parsed Profile is null");
-
-        profileNode["lastUpdated"] = GetCetTimestamp();
-        return Results.Ok(profileNode);
+        // SAFE ASSIGNMENT: Ensure node is a JsonObject before indexing with setter
+        if (node is JsonObject profileObj) {
+            profileObj["lastUpdated"] = GetCetTimestamp();
+            return Results.Ok(profileObj);
+        } else {
+            AddLog("PROFILE_ERR: Cached content is not a JSON Object.", "ERROR");
+            return Results.Json(new { error = "Internal Profile Format Error", type = node?.GetType().Name }, statusCode: 500);
+        }
     } catch (Exception ex) {
         AddLog($"PROFILE_FATAL: {ex.Message}", "ERROR");
         return Results.Json(new { error = "Internal Server Error during profile retrieval.", details = ex.Message }, statusCode: 500);
@@ -151,8 +155,8 @@ app.MapPost("/audit", async (string? since, IHttpClientFactory clientFactory) =>
             int page = 1;
             var sinceTs = DateTimeOffset.Parse(since ?? "2020-01-01").ToUnixTimeSeconds();
             
-            AddLog($"AUDIT_STEP: Crawling Strava after {sinceTs}...");
-            while(page <= 20) {
+            AddLog($"AUDIT_STEP: Crawling Strava history (Since={sinceTs})...");
+            while(page <= 25) { // Support deeper history for multi-year athletes
                 var res = await stravaClient.GetAsync($"https://www.strava.com/api/v3/athlete/activities?per_page=200&page={page}&after={sinceTs}");
                 if (!res.IsSuccessStatusCode) break;
                 var batch = await res.Content.ReadFromJsonAsync<List<JsonElement>>();
@@ -182,17 +186,23 @@ app.MapPost("/audit", async (string? since, IHttpClientFactory clientFactory) =>
             var raceTime = GetEnv("GOAL_RACE_TIME") ?? "3:30:00";
 
             var prompt = $@"ROLE: Professional Marathon/Ultramarathon Coach.
-TASK: Analyze history and generate profile.
-GOAL: {raceType} on {raceDate} ({raceTime}).
+TASK: Analyze athlete's complete training history and generate a status profile + training plan.
+GOAL: {raceType} on {raceDate} (Target: {raceTime}).
 
-OUTPUT: Strict JSON matching the 'AthleteProfile' interface.
-MILESTONES: Identified by fuzzy logic (+/- 2km).
-CALENDAR: RUN EVERY DAY. 2-3x Gym. Next workout at top of plan.
+OUTPUT RULES:
+- Return ONLY strict JSON matching the 'AthleteProfile' interface.
+- MILESTONES: Identify counts and Personal Bests (PBs) using fuzzy logic (+/- 2km).
+  - Backyard Loop (~6.7km)
+  - 5k, 10k, 20k, Half Marathon, Marathon, Ultra (>45km).
+- CALENDAR: Provide a daily training schedule starting from TODAY until {raceDate}.
+  - RUN EVERY DAY.
+  - GYM: 2-3 specific dumbbell sessions per week.
+  - SESSIONS: For intervals/tempo, provide exact reps, paces, and recovery times.
 
 DATA: {JsonSerializer.Serialize(cleanData)}";
 
             using var aiClient = clientFactory.CreateClient("GeminiClient");
-            AddLog("AUDIT_STEP: Transmitting to Gemini 3 Flash...");
+            AddLog("AUDIT_STEP: Transmitting context to Gemini 3 Flash...");
             var aiRes = await aiClient.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={apiKey}", new { 
                 contents = new[] { new { parts = new[] { new { text = prompt } } } } 
             });
@@ -210,24 +220,37 @@ DATA: {JsonSerializer.Serialize(cleanData)}";
             else if (aiText.Contains("```")) aiText = aiText.Split("```")[1].Split("```")[0].Trim();
 
             var cacheId = await GetCachedSystemActivityId(stravaClient);
-            var stravaQuota = new { dailyUsed = 10, dailyLimit = 1000, minuteUsed = 0, minuteLimit = 15, resetAt = DateTime.UtcNow.AddDays(1).ToString("O") };
+            var stravaQuota = new { dailyUsed = 15, dailyLimit = 1000, minuteUsed = 0, minuteLimit = 15, resetAt = DateTime.UtcNow.AddDays(1).ToString("O") };
             var geminiQuota = new { dailyUsed = 1, dailyLimit = 1500, minuteUsed = 0, minuteLimit = 15, resetAt = DateTime.UtcNow.AddDays(1).ToString("O") };
             
             var profileNode = JsonNode.Parse(aiText);
-            profileNode!["stravaQuota"] = JsonNode.Parse(JsonSerializer.Serialize(stravaQuota));
-            profileNode!["geminiQuota"] = JsonNode.Parse(JsonSerializer.Serialize(geminiQuota));
-            
-            var finalDesc = $"[StravAI System Cache]\n---CACHE_START---\n{profileNode.ToJsonString()}\n---CACHE_END---\nUpdated: {GetCetTimestamp()}";
-            
-            if (cacheId == null) {
-                await stravaClient.PostAsJsonAsync("https://www.strava.com/api/v3/activities", new { name="[StravAI] System Cache", type="Run", start_date_local=DateTime.UtcNow.ToString("O"), elapsed_time=1, description=finalDesc, @private=true });
+            if (profileNode is JsonObject obj) {
+                obj["stravaQuota"] = JsonNode.Parse(JsonSerializer.Serialize(stravaQuota));
+                obj["geminiQuota"] = JsonNode.Parse(JsonSerializer.Serialize(geminiQuota));
+                
+                var finalDesc = $"[StravAI System Cache]\n---CACHE_START---\n{obj.ToJsonString()}\n---CACHE_END---\nUpdated: {GetCetTimestamp()}";
+                
+                if (cacheId == null) {
+                    await stravaClient.PostAsJsonAsync("https://www.strava.com/api/v3/activities", new { 
+                        name="[StravAI] System Cache", 
+                        type="Run", 
+                        start_date_local=DateTime.UtcNow.ToString("O"), 
+                        elapsed_time=1, 
+                        description=finalDesc, 
+                        @private=true 
+                    });
+                } else {
+                    await stravaClient.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{cacheId}", new { description = finalDesc });
+                }
+                AddLog("AUDIT_SUCCESS: Intelligence sync finalized and cached.", "SUCCESS");
             } else {
-                await stravaClient.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{cacheId}", new { description = finalDesc });
+                AddLog("AUDIT_FAIL: AI output was not a valid profile object.", "ERROR");
             }
             
-            AddLog("AUDIT_SUCCESS: Intelligence sync finalized.", "SUCCESS");
             _cacheExpiry = DateTime.MinValue; 
-        } catch (Exception ex) { AddLog($"AUDIT_FATAL: {ex.Message}", "ERROR"); }
+        } catch (Exception ex) { 
+            AddLog($"AUDIT_FATAL: {ex.Message}", "ERROR"); 
+        }
     });
     return Results.Accepted();
 });
