@@ -19,28 +19,68 @@ const QuotaProgressBar = ({ used, limit, label, color }: { used: number, limit: 
   );
 };
 
-const MilestoneCard = ({ milestone }: { milestone: RunCategory }) => (
-  <div className="bg-slate-900/40 border border-slate-800 p-3 rounded-xl hover:border-slate-700 transition-colors">
+const MilestoneCard = ({ milestone, category }: { milestone: RunCategory, category: string }) => (
+  <div className="bg-slate-900/60 border border-slate-800 p-4 rounded-2xl hover:border-cyan-500/30 transition-all group">
     <div className="flex justify-between items-start mb-2">
-      <span className="text-[8px] font-black uppercase text-slate-500 tracking-wider">{milestone.category}</span>
-      <span className="text-[10px] font-black text-cyan-500">{milestone.count}X</span>
+      <span className="text-[9px] font-black uppercase text-slate-500 tracking-widest group-hover:text-cyan-400 transition-colors">{category}</span>
+      <span className="text-[11px] font-black text-white bg-slate-800 px-2 py-0.5 rounded-full">{milestone.count}X</span>
     </div>
     <div className="flex flex-col">
-       <span className="text-[10px] text-white font-black">{milestone.pb || '--:--'}</span>
-       <span className="text-[7px] font-bold text-slate-600 uppercase">Personal_Best</span>
+       <span className="text-sm text-white font-black">{milestone.pb || 'N/A'}</span>
+       <span className="text-[7px] font-bold text-slate-600 uppercase tracking-tighter">Personal_Best</span>
     </div>
   </div>
 );
 
 const CalendarSession = ({ session, isNext }: { session: TrainingSession, isNext: boolean }) => (
-  <div className={`p-3 rounded-xl border transition-all ${isNext ? 'bg-cyan-500/10 border-cyan-500 shadow-[0_0_15px_rgba(34,211,238,0.2)]' : 'bg-slate-900 border-slate-800'}`}>
-    <div className="flex justify-between items-center mb-1">
-      <span className="text-[8px] font-black uppercase text-slate-500">{new Date(session.date).toLocaleDateString(undefined, { weekday: 'short', day: 'numeric' })}</span>
-      {isNext && <span className="text-[7px] bg-cyan-500 text-black font-black px-1 rounded">NEXT</span>}
+  <div className={`p-4 rounded-2xl border transition-all ${isNext ? 'bg-cyan-500/10 border-cyan-500 shadow-[0_0_20px_rgba(34,211,238,0.15)] ring-1 ring-cyan-500/20' : 'bg-slate-900/40 border-slate-800'}`}>
+    <div className="flex justify-between items-center mb-2">
+      <span className="text-[9px] font-black uppercase text-slate-500">{new Date(session.date).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}</span>
+      {isNext && <span className="text-[8px] bg-cyan-500 text-black font-black px-2 py-0.5 rounded tracking-widest">NEXT</span>}
     </div>
-    <h4 className={`text-[10px] font-black uppercase truncate ${isNext ? 'text-cyan-400' : 'text-white'}`}>{session.title}</h4>
-    <p className="text-[9px] text-slate-400 mt-1 line-clamp-2">{session.description}</p>
-    {session.distance && <div className="mt-2 text-[8px] font-bold text-slate-500 uppercase">{session.distance} • {session.targetPace}</div>}
+    <div className="flex items-center gap-2 mb-1">
+        <span className={`w-2 h-2 rounded-full ${session.type === 'Interval' ? 'bg-red-500' : session.type === 'Tempo' ? 'bg-orange-500' : session.type === 'Long Run' ? 'bg-blue-500' : session.type === 'Gym' ? 'bg-purple-500' : 'bg-emerald-500'}`} />
+        <h4 className={`text-[11px] font-black uppercase truncate ${isNext ? 'text-cyan-400' : 'text-white'}`}>{session.title}</h4>
+    </div>
+    <p className="text-[10px] text-slate-400 mt-2 leading-relaxed line-clamp-3">{session.description}</p>
+    
+    {(session.distance || session.targetPace) && (
+      <div className="mt-4 pt-3 border-t border-slate-800/50 flex gap-4">
+        {session.distance && (
+            <div>
+                <p className="text-[7px] font-black text-slate-600 uppercase tracking-tighter">Dist</p>
+                <p className="text-[10px] font-bold text-slate-300">{session.distance}</p>
+            </div>
+        )}
+        {session.targetPace && (
+            <div>
+                <p className="text-[7px] font-black text-slate-600 uppercase tracking-tighter">Pace</p>
+                <p className="text-[10px] font-bold text-slate-300">{session.targetPace}</p>
+            </div>
+        )}
+      </div>
+    )}
+
+    {session.intervals && (
+        <div className="mt-4 bg-slate-950/50 rounded-lg p-2 border border-slate-800">
+            <p className="text-[7px] font-black text-slate-500 uppercase mb-1">Interval_Protocol</p>
+            <p className="text-[9px] font-bold text-cyan-500">{session.intervals.reps}x {session.intervals.work} @ {session.intervals.pace}</p>
+            <p className="text-[8px] text-slate-600">Rest: {session.intervals.rest}</p>
+        </div>
+    )}
+
+    {session.gymWorkout && (
+        <div className="mt-4 space-y-1">
+             <p className="text-[7px] font-black text-slate-500 uppercase mb-1">Dumbbell_Circuit</p>
+             {session.gymWorkout.slice(0, 3).map((ex, i) => (
+                 <div key={i} className="text-[9px] text-slate-400 flex items-center gap-1">
+                     <span className="w-1 h-1 bg-slate-700 rounded-full" />
+                     {ex}
+                 </div>
+             ))}
+             {session.gymWorkout.length > 3 && <p className="text-[8px] text-slate-600">+{session.gymWorkout.length - 3} more...</p>}
+        </div>
+    )}
   </div>
 );
 
@@ -102,85 +142,146 @@ const App: React.FC = () => {
         <div className="flex items-center gap-4">
           <StravAILogo className="w-8 h-8" />
           <div>
-            <h1 className="text-white font-black uppercase text-xs tracking-tighter">StravAI_TMS_v2</h1>
+            <h1 className="text-white font-black uppercase text-xs tracking-tighter">StravAI_TMS_v2.1</h1>
             <div className={`text-[8px] font-bold uppercase ${backendStatus === 'ONLINE' ? 'text-cyan-400' : 'text-red-500'}`}>{backendStatus}</div>
           </div>
         </div>
-        <div className="flex gap-6 w-1/3">
-          <QuotaProgressBar label="Strava_API" used={profile?.stravaQuota?.dailyUsed || 0} limit={profile?.stravaQuota?.dailyLimit || 1000} color="bg-orange-500" />
-          <QuotaProgressBar label="Intelligence_API" used={profile?.geminiQuota?.dailyUsed || 0} limit={profile?.geminiQuota?.dailyLimit || 1500} color="bg-cyan-500" />
+        <div className="hidden md:flex gap-8 w-1/2">
+          <QuotaProgressBar label="Strava_Limits" used={profile?.stravaQuota?.dailyUsed || 0} limit={profile?.stravaQuota?.dailyLimit || 1000} color="bg-orange-600" />
+          <QuotaProgressBar label="Gemini_Credits" used={profile?.geminiQuota?.dailyUsed || 0} limit={profile?.geminiQuota?.dailyLimit || 1500} color="bg-cyan-500" />
         </div>
-        <button onClick={() => setShowSetup(true)} className="p-2 border border-slate-800 rounded hover:bg-slate-800"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg></button>
+        <button onClick={() => setShowSetup(true)} className="p-2 border border-slate-800 rounded-xl hover:bg-slate-800 transition-colors"><svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg></button>
       </header>
 
       <div className="flex-grow flex overflow-hidden">
-        <nav className="w-16 border-r border-slate-800 bg-slate-900/40 flex flex-col items-center py-6 gap-8">
-           <button onClick={() => setActiveTab('DASHBOARD')} className={`p-2 rounded ${activeTab === 'DASHBOARD' ? 'bg-cyan-500/10 text-cyan-400' : 'text-slate-600'}`}><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg></button>
-           <button onClick={() => setActiveTab('PLAN')} className={`p-2 rounded ${activeTab === 'PLAN' ? 'bg-cyan-500/10 text-cyan-400' : 'text-slate-600'}`}><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg></button>
-           <button onClick={() => setActiveTab('LOGS')} className={`p-2 rounded ${activeTab === 'LOGS' ? 'bg-cyan-500/10 text-cyan-400' : 'text-slate-600'}`}><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg></button>
+        <nav className="w-20 border-r border-slate-800 bg-slate-900/40 flex flex-col items-center py-8 gap-10 shrink-0">
+           <button onClick={() => setActiveTab('DASHBOARD')} className={`p-3 rounded-2xl transition-all ${activeTab === 'DASHBOARD' ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[0_0_15px_rgba(34,211,238,0.1)]' : 'text-slate-600 hover:text-slate-400'}`} title="Dashboard">
+             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
+           </button>
+           <button onClick={() => setActiveTab('PLAN')} className={`p-3 rounded-2xl transition-all ${activeTab === 'PLAN' ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[0_0_15px_rgba(34,211,238,0.1)]' : 'text-slate-600 hover:text-slate-400'}`} title="Training Plan">
+             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+           </button>
+           <button onClick={() => setActiveTab('LOGS')} className={`p-3 rounded-2xl transition-all ${activeTab === 'LOGS' ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 shadow-[0_0_15px_rgba(34,211,238,0.1)]' : 'text-slate-600 hover:text-slate-400'}`} title="System Logs">
+             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+           </button>
         </nav>
 
-        <main className="flex-grow overflow-y-auto p-8 custom-scroll">
+        <main className="flex-grow overflow-y-auto p-10 custom-scroll bg-slate-950/50">
           {activeTab === 'DASHBOARD' && profile && (
-            <div className="space-y-10 max-w-7xl">
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                <div className="lg:col-span-2 space-y-8">
-                  <section className="bg-slate-900 border border-slate-800 p-6 rounded-3xl relative overflow-hidden">
-                    <div className="absolute top-0 right-0 w-32 h-32 bg-cyan-500/5 blur-3xl -mr-16 -mt-16" />
-                    <h3 className="text-cyan-400 font-black uppercase text-xs mb-4">Elite_Narrative_Analysis</h3>
-                    <p className="text-slate-300 leading-relaxed text-[11px] font-medium">{profile.summary}</p>
-                    <div className="mt-6 pt-4 border-t border-slate-800 italic text-slate-500 text-[10px]">"{profile.coachNotes}"</div>
+            <div className="space-y-12 max-w-7xl mx-auto">
+              <div className="grid grid-cols-1 lg:grid-cols-4 gap-10">
+                <div className="lg:col-span-3 space-y-10">
+                  <section className="bg-gradient-to-br from-slate-900 to-slate-950 border border-slate-800 p-10 rounded-[3rem] relative overflow-hidden shadow-2xl">
+                    <div className="absolute top-0 right-0 w-64 h-64 bg-cyan-500/5 blur-[120px] -mr-32 -mt-32" />
+                    <h3 className="text-cyan-400 font-black uppercase text-xs mb-6 tracking-widest flex items-center gap-2">
+                        <span className="w-4 h-0.5 bg-cyan-500" />
+                        Intelligence_Aggregate_Analysis
+                    </h3>
+                    <p className="text-slate-200 leading-relaxed text-[13px] font-medium selection:bg-cyan-500/30">{profile.summary}</p>
+                    <div className="mt-8 pt-6 border-t border-slate-800/50 italic text-slate-500 text-[11px] flex justify-between items-center">
+                        <span>"{profile.coachNotes}"</span>
+                        <span className="text-[9px] font-black uppercase text-slate-700">Ref_ID: {profile.lastUpdated}</span>
+                    </div>
                   </section>
                   
-                  <section className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    {Object.values(profile.milestones || {}).map((m, i) => <MilestoneCard key={i} milestone={m as any} />)}
+                  <section>
+                    <h2 className="text-[10px] font-black uppercase text-slate-500 mb-6 tracking-[0.3em] px-2">Endurance_Milestones</h2>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      {Object.entries(profile.milestones || {}).map(([key, m], i) => (
+                        <MilestoneCard key={i} category={key.replace(/([A-Z])/g, ' $1').trim()} milestone={m as any} />
+                      ))}
+                    </div>
                   </section>
                 </div>
 
-                <div className="space-y-6">
-                   <div className="bg-slate-900 border border-slate-800 p-6 rounded-3xl space-y-4">
-                      <h4 className="text-white font-black uppercase text-[10px] tracking-widest">Triathlon_Log</h4>
-                      <div className="space-y-3">
+                <div className="space-y-8">
+                   <div className="bg-slate-900/60 border border-slate-800 p-8 rounded-[2rem] space-y-6">
+                      <h4 className="text-white font-black uppercase text-[10px] tracking-[0.2em] mb-4">Multi_Sport_Log</h4>
+                      <div className="space-y-4">
                          {Object.entries(profile.triathlon || {}).map(([key, val]) => (
-                           <div key={key} className="flex justify-between border-b border-slate-800 pb-2 last:border-0">
-                              <span className="text-[8px] font-bold text-slate-500 uppercase">{key}</span>
-                              <span className="text-[10px] font-black text-white">{val as any}</span>
+                           <div key={key} className="flex justify-between items-end border-b border-slate-800 pb-3 last:border-0">
+                              <span className="text-[9px] font-bold text-slate-500 uppercase tracking-tighter">{key}</span>
+                              <span className="text-[14px] font-black text-white">{val as any}</span>
                            </div>
                          ))}
                       </div>
                    </div>
-                   <button onClick={handleAudit} disabled={auditPending} className="w-full py-4 bg-slate-800 border border-slate-700 rounded-2xl text-[10px] font-black uppercase hover:bg-slate-700 transition-all text-amber-400 tracking-widest">{auditPending ? 'AUDITING...' : 'Re-Generate_Training_Plan'}</button>
+                   
+                   <div className="bg-slate-900/60 border border-slate-800 p-8 rounded-[2rem] space-y-6">
+                      <h4 className="text-white font-black uppercase text-[10px] tracking-[0.2em] mb-4">Current_Phase</h4>
+                      <div className="space-y-4">
+                          <div className="flex justify-between text-[11px]">
+                              <span className="text-slate-500 font-bold uppercase">Weekly_Volume</span>
+                              <span className="text-white font-black">{profile.periodic?.week?.distanceKm?.toFixed(1) || '0.0'} km</span>
+                          </div>
+                          <div className="flex justify-between text-[11px]">
+                              <span className="text-slate-500 font-bold uppercase">Monthly_Build</span>
+                              <span className="text-white font-black">{profile.periodic?.month?.distanceKm?.toFixed(1) || '0.0'} km</span>
+                          </div>
+                      </div>
+                   </div>
+
+                   <button onClick={handleAudit} disabled={auditPending} className="w-full py-5 bg-cyan-600/10 border border-cyan-500/20 rounded-[1.5rem] text-[10px] font-black uppercase hover:bg-cyan-500/20 transition-all text-cyan-400 tracking-widest disabled:opacity-50 group flex items-center justify-center gap-2">
+                     {auditPending ? (
+                       <div className="w-3 h-3 border-2 border-cyan-500/30 border-t-cyan-500 rounded-full animate-spin" />
+                     ) : (
+                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                     )}
+                     {auditPending ? 'SYNCHRONIZING...' : 'Trigger_Full_Audit'}
+                   </button>
                 </div>
               </div>
             </div>
           )}
 
           {activeTab === 'PLAN' && profile && (
-            <div className="space-y-6">
-               <h2 className="text-white font-black uppercase tracking-tighter">Current_Periodization_Calendar</h2>
-               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+            <div className="space-y-10 max-w-7xl mx-auto">
+               <div className="flex justify-between items-end">
+                  <h2 className="text-2xl font-black text-white uppercase tracking-tighter">Periodization_Schedule</h2>
+                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest bg-slate-900 px-4 py-2 rounded-full border border-slate-800">Uplink: Active</span>
+               </div>
+               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                   {profile.trainingPlan?.map((s, i) => <CalendarSession key={i} session={s} isNext={i === 0} />)}
                </div>
             </div>
           )}
 
           {activeTab === 'LOGS' && (
-            <div className="h-full bg-black/40 border border-slate-800 rounded-2xl p-6 font-mono text-[10px] overflow-y-auto custom-scroll">
-               {logs.map((l, i) => <div key={i} className="mb-1 text-slate-400"><span className="opacity-30">[{i}]</span> {l}</div>)}
+            <div className="h-full bg-slate-900/20 border border-slate-800 rounded-[2rem] p-8 font-mono text-[10px] overflow-y-auto custom-scroll selection:bg-cyan-500/30">
+               <h4 className="text-slate-500 font-black uppercase mb-6 tracking-widest border-b border-slate-800 pb-4">Engine_Event_Stream</h4>
+               {logs.length === 0 ? (
+                 <p className="text-slate-700 italic">No events recorded in current session...</p>
+               ) : (
+                 logs.map((l, i) => (
+                   <div key={i} className={`mb-2 py-1 px-3 rounded ${l.includes('[ERROR]') ? 'text-red-400 bg-red-500/5' : l.includes('[SUCCESS]') ? 'text-cyan-400 bg-cyan-500/5' : 'text-slate-400 hover:text-slate-300'}`}>
+                     <span className="opacity-20 mr-3 text-[8px]">{i.toString().padStart(3, '0')}</span> 
+                     {l}
+                   </div>
+                 ))
+               )}
             </div>
           )}
         </main>
       </div>
 
       {showSetup && (
-        <div className="fixed inset-0 z-50 bg-black/95 backdrop-blur-xl flex items-center justify-center p-6">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-10 max-w-sm w-full space-y-6">
-             <h3 className="text-white font-black uppercase text-center">System_Initialization</h3>
-             <div className="space-y-4">
-                <input type="text" placeholder="BACKEND URL" value={backendUrl} onChange={e => setBackendUrl(e.target.value)} className="w-full bg-slate-950 border border-slate-800 p-4 rounded-xl text-xs font-mono outline-none focus:border-cyan-500 transition-colors" />
-                <input type="password" placeholder="SYSTEM SECRET" value={backendSecret} onChange={e => setBackendSecret(e.target.value)} className="w-full bg-slate-950 border border-slate-800 p-4 rounded-xl text-xs font-mono outline-none focus:border-cyan-500 transition-colors" />
+        <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-3xl flex items-center justify-center p-8">
+          <div className="bg-slate-900 border border-slate-800 rounded-[3rem] p-12 max-w-md w-full space-y-8 shadow-[0_0_100px_rgba(34,211,238,0.05)]">
+             <div className="text-center space-y-2">
+                <h3 className="text-white font-black uppercase tracking-tighter text-xl">System_Initialization</h3>
+                <p className="text-slate-500 text-[10px] font-bold uppercase tracking-widest">Secure_Handshake_Required</p>
              </div>
-             <button onClick={() => { localStorage.setItem('stravai_backend_url', backendUrl); localStorage.setItem('stravai_backend_secret', backendSecret); setShowSetup(false); }} className="w-full py-4 bg-cyan-600 text-white font-black rounded-2xl uppercase text-[10px] tracking-widest hover:bg-cyan-500 transition-all shadow-[0_10px_30px_rgba(34,211,238,0.2)]">Establish_Uplink</button>
+             <div className="space-y-6">
+                <div className="space-y-2">
+                   <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest ml-1">Backend_Uplink_Address</p>
+                   <input type="text" placeholder="https://your-app.koyeb.app" value={backendUrl} onChange={e => setBackendUrl(e.target.value)} className="w-full bg-slate-950 border border-slate-800 p-5 rounded-2xl text-xs font-mono outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/20 transition-all" />
+                </div>
+                <div className="space-y-2">
+                   <p className="text-[9px] font-black text-slate-600 uppercase tracking-widest ml-1">Encrypted_System_Secret</p>
+                   <input type="password" placeholder="••••••••••••••••" value={backendSecret} onChange={e => setBackendSecret(e.target.value)} className="w-full bg-slate-950 border border-slate-800 p-5 rounded-2xl text-xs font-mono outline-none focus:border-cyan-500 focus:ring-1 focus:ring-cyan-500/20 transition-all" />
+                </div>
+             </div>
+             <button onClick={() => { localStorage.setItem('stravai_backend_url', backendUrl); localStorage.setItem('stravai_backend_secret', backendSecret); setShowSetup(false); }} className="w-full py-5 bg-cyan-600 text-white font-black rounded-2xl uppercase text-[11px] tracking-[0.2em] hover:bg-cyan-500 transition-all shadow-[0_15px_40px_rgba(34,211,238,0.3)] hover:-translate-y-1 active:translate-y-0">Establish_Secure_Uplink</button>
           </div>
         </div>
       )}
