@@ -199,7 +199,7 @@ const App: React.FC = () => {
         <div className="flex items-center gap-4">
           <StravAILogo className="w-8 h-8" />
           <div>
-            <h1 className="text-white font-black uppercase text-xs tracking-tighter">StravAI_TMS_v2.2</h1>
+            <h1 className="text-white font-black uppercase text-xs tracking-tighter">StravAI_TMS_v2.3</h1>
             <div className="flex gap-3">
                 <div className={`text-[8px] font-bold uppercase flex items-center gap-1.5 ${backendStatus === 'ONLINE' ? 'text-cyan-400' : 'text-red-500'}`}>
                     <span className={`w-1.5 h-1.5 rounded-full ${backendStatus === 'ONLINE' ? 'bg-cyan-500 animate-pulse' : 'bg-red-500'}`} />
@@ -355,8 +355,8 @@ const App: React.FC = () => {
       </div>
 
       {showSetup && (
-        <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-3xl flex items-center justify-center p-8">
-          <div className="bg-slate-900 border border-slate-800 rounded-[3rem] p-12 max-w-md w-full space-y-8 shadow-[0_0_100px_rgba(34,211,238,0.05)]">
+        <div className="fixed inset-0 z-[100] bg-black/90 backdrop-blur-3xl flex items-center justify-center p-8 overflow-y-auto">
+          <div className="bg-slate-900 border border-slate-800 rounded-[3rem] p-12 max-w-md w-full space-y-8 shadow-[0_0_100px_rgba(34,211,238,0.05)] my-auto">
              <div className="text-center space-y-2">
                 <h3 className="text-white font-black uppercase tracking-tighter text-xl">Initialization</h3>
                 <p className="text-[9px] text-slate-500 uppercase tracking-widest font-black">Configure_System_Uplink</p>
@@ -371,6 +371,16 @@ const App: React.FC = () => {
                     <label className="text-[8px] font-black text-slate-600 uppercase tracking-widest ml-1">System_Secret</label>
                     <input type="password" placeholder="X-StravAI-Secret" value={backendSecret} onChange={e => setBackendSecret(e.target.value)} className="w-full bg-slate-950 border border-slate-800 p-4 rounded-2xl text-xs font-mono outline-none focus:border-cyan-500 transition-colors" />
                 </div>
+             </div>
+
+             <div className="p-4 bg-slate-950 border border-slate-800 rounded-2xl space-y-4 text-[9px] text-slate-500 leading-relaxed font-bold">
+                <h4 className="text-cyan-500 font-black uppercase tracking-widest flex items-center gap-2 mb-1">
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                    System_Architecture_Guide
+                </h4>
+                <p>1. <span className="text-slate-300">SYSTEM_CACHE:</span> We use a private Strava activity to store your athlete profile. This replaces a paid database.</p>
+                <p>2. <span className="text-slate-300">WEBHOOKS:</span> Strava sends a signal here when you upload a run. AI then analyzes it instantly.</p>
+                <p>3. <span className="text-slate-300">KEYS:</span> Ensure <code className="text-cyan-400">GEMINI_API_KEY</code> is set in your host env vars.</p>
              </div>
 
              <div className="p-4 bg-slate-950 border border-slate-800 rounded-2xl space-y-4">
