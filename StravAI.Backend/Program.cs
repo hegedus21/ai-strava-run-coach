@@ -10,15 +10,8 @@ using System.Text.Json.Nodes;
 using System.Net;
 
 var builder = WebApplication.CreateBuilder(args);
-var portEnv = Environment.GetEnvironmentVariable("PORT") ?? "8080";
-if (!int.TryParse(portEnv, out var port)) port = 8080;
-
-// FORCED IPv4 BINDING: Most cloud platforms require 0.0.0.0 for health checks to pass.
-// Using ConfigureKestrel is the most authoritative way to bypass environment variable overrides.
-builder.WebHost.ConfigureKestrel(options =>
-{
-    options.Listen(IPAddress.Any, port);
-});
+var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
+builder.WebHost.UseSetting("http_ports", port);
 
 builder.Services.AddHttpClient();
 builder.Services.AddHttpClient("GeminiClient");
@@ -28,178 +21,179 @@ builder.Services.AddCors(options => options.AddPolicy("AllowAll", p => p.AllowAn
 
 var app = builder.Build();
 
-// Enable standard health check endpoint
 app.MapHealthChecks("/health");
+app.MapGet("/", () => Results.Ok(new { service = "StravAI", status = "online", timestamp = DateTime.UtcNow }));
 
 app.UseCors("AllowAll");
 
-// --- GLOBAL DIAGNOSTIC MIDDLEWARE ---
+// Security Middleware
 app.Use(async (context, next) => {
-    // Log incoming requests to prove the app is reachable
-    if (context.Request.Path == "/" || context.Request.Path == "/health") {
-        SystemState.AddLog($"HEALTH_PROBE: {context.Request.Method} {context.Request.Path} from {context.Connection.RemoteIpAddress}");
+    var path = context.Request.Path.ToString().ToLower();
+    if (path != "/health" && path != "/" && !path.StartsWith("/webhook")) {
+        var secret = Environment.GetEnvironmentVariable("STRAVAI_BACKEND_SECRET") ?? app.Configuration["X-StravAI-Secret"];
+        if (!string.IsNullOrEmpty(secret)) {
+            if (!context.Request.Headers.TryGetValue("X-StravAI-Secret", out var providedSecret) || providedSecret != secret) {
+                SystemState.AddLog($"AUTH_DENIED: Request to {path} rejected.", "WARNING");
+                context.Response.StatusCode = 401;
+                await context.Response.WriteAsync("Unauthorized");
+                return;
+            }
+        }
     }
-    
-    try {
-        await next();
-    } catch (KeyNotFoundException ex) {
-        SystemState.AddLog($"JSON_MAP_ERROR: Required data key missing.", "ERROR");
-        SystemState.AddLog($"DETAILS: {ex.Message}", "ERROR");
-        context.Response.StatusCode = 500;
-        await context.Response.WriteAsJsonAsync(new { error = "Mapping Error", details = ex.Message });
-    } catch (Exception ex) {
-        SystemState.AddLog($"CRITICAL_FAULT: {ex.GetType().Name} - {ex.Message}", "ERROR");
-        throw;
-    }
+    await next();
 });
 
-// --- STARTUP LOGS ---
-SystemState.AddLog($"SYSTEM_BOOT: Listening on http://0.0.0.0:{port}");
-string[] criticalKeys = { "STRAVA_CLIENT_ID", "STRAVA_CLIENT_SECRET", "STRAVA_REFRESH_TOKEN", "API_KEY", "GEMINI_API_KEY" };
-foreach(var key in criticalKeys) {
-    var val = GetEnv(key, app.Configuration);
-    if (string.IsNullOrEmpty(val)) {
-        SystemState.AddLog($"CONFIG_CHECK: {key} is MISSING", "WARNING");
-    } else {
-        var masked = val.Length > 8 ? $"{val[..4]}...{val[^4..]}" : "****";
-        SystemState.AddLog($"CONFIG_CHECK: {key} is LOADED ({masked})");
-    }
-}
-
-// --- ROOT HANDLER ---
-app.MapGet("/", () => Results.Ok(new { service = "StravAI", status = "online", timestamp = DateTime.UtcNow }));
 app.MapGet("/logs", () => Results.Ok(SystemState.Logs.ToArray()));
 
-// --- WEBHOOK MANAGEMENT ---
-
-app.MapGet("/webhook/status", async (IHttpClientFactory clientFactory) => {
-    try {
-        using var client = clientFactory.CreateClient();
-        var res = await client.GetAsync($"https://www.strava.com/api/v3/push_subscriptions?client_id={GetEnv("STRAVA_CLIENT_ID", app.Configuration)}&client_secret={GetEnv("STRAVA_CLIENT_SECRET", app.Configuration)}");
-        if (!res.IsSuccessStatusCode) return Results.StatusCode((int)res.StatusCode);
-        return Results.Ok(await res.Content.ReadFromJsonAsync<JsonElement>());
-    } catch (Exception ex) { return Results.Problem(ex.Message); }
-});
-
-app.MapPost("/webhook/register", async (IHttpClientFactory clientFactory, [FromQuery] string callbackUrl) => {
-    try {
-        using var client = clientFactory.CreateClient();
-        var payload = new FormUrlEncodedContent(new[] {
-            new KeyValuePair<string, string>("client_id", GetEnv("STRAVA_CLIENT_ID", app.Configuration)),
-            new KeyValuePair<string, string>("client_secret", GetEnv("STRAVA_CLIENT_SECRET", app.Configuration)),
-            new KeyValuePair<string, string>("callback_url", callbackUrl),
-            new KeyValuePair<string, string>("verify_token", GetEnv("STRAVA_VERIFY_TOKEN", app.Configuration) ?? "STRAVAI_SECURE_TOKEN")
-        });
-        var res = await client.PostAsync("https://www.strava.com/api/v3/push_subscriptions", payload);
-        var content = await res.Content.ReadAsStringAsync();
-        if (!res.IsSuccessStatusCode) return Results.BadRequest(new { error = content });
-        SystemState.AddLog("WEBHOOK_REG: Success.", "SUCCESS");
-        return Results.Ok(JsonSerializer.Deserialize<JsonElement>(content));
-    } catch (Exception ex) { return Results.Problem(ex.Message); }
-});
-
-app.MapGet("/webhook", ([FromQuery(Name = "hub.mode")] string mode, [FromQuery(Name = "hub.challenge")] string challenge, [FromQuery(Name = "hub.verify_token")] string verifyToken) => {
-    var secret = GetEnv("STRAVA_VERIFY_TOKEN", app.Configuration) ?? "STRAVAI_SECURE_TOKEN";
-    if (mode == "subscribe" && verifyToken == secret) return Results.Ok(new { hub_challenge = challenge });
-    return Results.Unauthorized();
-});
-
-app.MapPost("/webhook", async (HttpContext context, IHttpClientFactory clientFactory) => {
-    using var reader = new StreamReader(context.Request.Body);
-    var body = await reader.ReadToEndAsync();
-    var eventData = JsonSerializer.Deserialize<JsonElement>(body);
-    if (eventData.TryGetProperty("object_type", out var objType) && objType.GetString() == "activity" && eventData.TryGetProperty("aspect_type", out var aspect) && aspect.GetString() == "create") {
-        var activityId = eventData.GetProperty("object_id").GetInt64();
-        SystemState.AddLog($"WEBHOOK_EVENT: Activity {activityId} detected.");
-        _ = Task.Run(async () => {
-            try {
-                using var stravaClient = clientFactory.CreateClient();
-                var token = await GetStravaAccessToken(stravaClient, app.Configuration);
-                if (token == null) return;
-                stravaClient.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-                var actRes = await stravaClient.GetAsync($"https://www.strava.com/api/v3/activities/{activityId}");
-                var activity = await actRes.Content.ReadFromJsonAsync<JsonElement>();
-                var historyRes = await stravaClient.GetAsync($"https://www.strava.com/api/v3/athlete/activities?per_page=20");
-                var history = await historyRes.Content.ReadFromJsonAsync<List<JsonElement>>() ?? new();
-                using var aiClient = clientFactory.CreateClient("GeminiClient");
-                var report = await RunCoachAnalysis(aiClient, activity, history, app.Configuration);
-                await stravaClient.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{activityId}", new { description = report });
-                SystemState.AddLog($"WEBHOOK_SUCCESS: Activity {activityId} processed.", "SUCCESS");
-            } catch (Exception ex) { SystemState.AddLog($"WEBHOOK_ERROR: {ex.Message}", "ERROR"); }
-        });
-    }
-    return Results.Ok();
-});
-
 app.MapGet("/profile", async (IHttpClientFactory clientFactory) => {
-    using var client = clientFactory.CreateClient();
-    var token = await GetStravaAccessToken(client, app.Configuration);
-    if (token == null) return Results.Unauthorized();
-    client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-    var res = await client.GetAsync("https://www.strava.com/api/v3/athlete/activities?per_page=100");
-    var acts = await res.Content.ReadFromJsonAsync<List<JsonElement>>();
-    
-    var cache = acts?.FirstOrDefault(a => a.GetProperty("name").GetString() == "[StravAI] System Cache");
-    if (!cache.HasValue || cache.Value.ValueKind == JsonValueKind.Undefined) return Results.NotFound();
-    
-    var detail = await client.GetAsync($"https://www.strava.com/api/v3/activities/{cache.Value.GetProperty("id").GetInt64()}");
-    var act = await detail.Content.ReadFromJsonAsync<JsonElement>();
-    var desc = act.GetProperty("description").GetString() ?? "";
-    var json = desc.Split("---CACHE_START---")[1].Split("---CACHE_END---")[0];
-    return Results.Ok(JsonNode.Parse(json));
+    try {
+        using var client = clientFactory.CreateClient();
+        var token = await GetStravaAccessToken(client, app.Configuration);
+        if (token == null) return Results.Unauthorized();
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        
+        var acts = await (await client.GetAsync("https://www.strava.com/api/v3/athlete/activities?per_page=100")).Content.ReadFromJsonAsync<List<JsonElement>>();
+        var cache = acts?.FirstOrDefault(a => a.GetProperty("name").GetString() == "[StravAI] System Cache");
+        
+        if (!cache.HasValue) {
+            SystemState.AddLog("PROFILE: No cache activity found.", "INFO");
+            return Results.NotFound(new { error = "Cache not found. Please run an audit." });
+        }
+
+        var detailRes = await client.GetAsync($"https://www.strava.com/api/v3/activities/{cache.Value.GetProperty("id").GetInt64()}");
+        var act = await detailRes.Content.ReadFromJsonAsync<JsonElement>();
+        var desc = act.GetProperty("description").GetString() ?? "";
+        
+        if (!desc.Contains("---CACHE_START---")) {
+            SystemState.AddLog("PROFILE: Found cache activity but no data markers.", "WARNING");
+            return Results.NotFound(new { error = "Cache activity empty." });
+        }
+
+        var jsonString = desc.Split("---CACHE_START---")[1].Split("---CACHE_END---")[0].Trim();
+        SystemState.AddLog($"PROFILE: Successfully loaded {jsonString.Length} bytes of athlete data.", "SUCCESS");
+        return Results.Ok(JsonNode.Parse(jsonString));
+    } catch (Exception ex) {
+        SystemState.AddLog($"PROFILE_ERROR: {ex.Message}", "ERROR");
+        return Results.Problem(ex.Message);
+    }
 });
 
 app.MapPost("/audit", async (IHttpClientFactory clientFactory) => {
-    SystemState.AddLog("AUDIT: Manual re-analysis requested.");
+    SystemState.AddLog("AUDIT: Starting deep history analysis...");
     _ = Task.Run(async () => {
         try {
             using var client = clientFactory.CreateClient();
             var token = await GetStravaAccessToken(client, app.Configuration);
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
             var history = await (await client.GetAsync("https://www.strava.com/api/v3/athlete/activities?per_page=100")).Content.ReadFromJsonAsync<List<JsonElement>>();
+            
             using var aiClient = clientFactory.CreateClient("GeminiClient");
-            var aiRes = await aiClient.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={ResolveApiKey(app.Configuration)}", new { contents = new[] { new { parts = new[] { new { text = $"ROLE: Elite Coach. Return raw JSON AthleteProfile. DATA: {JsonSerializer.Serialize(history?.Take(50))}" } } } } });
-            var root = await aiRes.Content.ReadFromJsonAsync<JsonElement>();
-            var text = SafeExtractText(root);
-            int s = text.IndexOf("{"); int e = text.LastIndexOf("}");
-            var profile = text.Substring(s, e - s + 1);
-            var finalDesc = $"[StravAI System Cache]\n---CACHE_START---\n{profile}\n---CACHE_END---\nUpdated: {DateTime.UtcNow}";
+            var key = ResolveApiKey(app.Configuration);
+            
+            var milestoneSchema = new {
+                type = "OBJECT",
+                properties = new {
+                    count = new { type = "INTEGER" },
+                    pb = new { type = "STRING" }
+                },
+                required = new[] { "count", "pb" }
+            };
+
+            var schema = new {
+                type = "OBJECT",
+                properties = new {
+                    lastUpdated = new { type = "STRING" },
+                    summary = new { type = "STRING" },
+                    coachNotes = new { type = "STRING" },
+                    milestones = new { 
+                        type = "OBJECT", 
+                        properties = new {
+                            fiveK = milestoneSchema,
+                            tenK = milestoneSchema,
+                            halfMarathon = milestoneSchema,
+                            marathon = milestoneSchema,
+                            ultra = milestoneSchema
+                        },
+                        required = new[] { "fiveK", "tenK", "halfMarathon" }
+                    },
+                    trainingPlan = new { 
+                        type = "ARRAY", 
+                        items = new { 
+                            type = "OBJECT", 
+                            properties = new {
+                                date = new { type = "STRING" },
+                                type = new { type = "STRING", @enum = new[] { "Easy", "Tempo", "Interval", "Long Run", "Gym", "Rest" } },
+                                title = new { type = "STRING" },
+                                description = new { type = "STRING" }
+                            },
+                            required = new[] { "date", "type", "title", "description" }
+                        } 
+                    }
+                },
+                required = new[] { "summary", "milestones", "trainingPlan" }
+            };
+
+            var payload = new {
+                contents = new[] { new { parts = new[] { new { text = $"ROLE: Professional Running Coach. DATA: {JsonSerializer.Serialize(history?.Take(50))}. TASK: Create athlete profile JSON with summary, milestones (PBs), and a 7-day plan." } } } },
+                generationConfig = new { responseMimeType = "application/json", responseSchema = schema, temperature = 0.1 }
+            };
+
+            var aiRes = await aiClient.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={key}", payload);
+            var result = await aiRes.Content.ReadFromJsonAsync<JsonElement>();
+            var profileJson = SafeExtractText(result);
             
             var cache = history?.FirstOrDefault(a => a.GetProperty("name").GetString() == "[StravAI] System Cache");
-            if (cache.HasValue && cache.Value.ValueKind == JsonValueKind.Object) 
-                await client.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{cache.Value.GetProperty("id").GetInt64()}", new { description = finalDesc });
-            else 
-                await client.PostAsJsonAsync("https://www.strava.com/api/v3/activities", new { name = "[StravAI] System Cache", type = "Run", start_date_local = DateTime.UtcNow.ToString("O"), elapsed_time = 1, description = finalDesc, @private = true });
+            var timestamp = DateTime.UtcNow.ToString("O");
+            var desc = $"[StravAI System Cache]\nDO NOT DELETE\n---CACHE_START---\n{profileJson}\n---CACHE_END---\nUpdated: {timestamp}";
             
-            SystemState.AddLog("AUDIT: Success.", "SUCCESS");
-        } catch (Exception ex) { SystemState.AddLog($"AUDIT_FAIL: {ex.Message}", "ERROR"); }
+            if (cache.HasValue) await client.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{cache.Value.GetProperty("id").GetInt64()}", new { description = desc });
+            else await client.PostAsJsonAsync("https://www.strava.com/api/v3/activities", new { name = "[StravAI] System Cache", type = "Run", start_date_local = timestamp, elapsed_time = 1, description = desc, @private = true });
+            
+            SystemState.AddLog("AUDIT: Success. Profile rebuilt and cached.", "SUCCESS");
+        } catch (Exception ex) {
+            SystemState.AddLog($"AUDIT_ERROR: {ex.Message}", "ERROR");
+        }
     });
     return Results.Accepted();
+});
+
+app.MapGet("/webhook", ([FromQuery(Name = "hub.mode")] string mode, [FromQuery(Name = "hub.challenge")] string challenge, [FromQuery(Name = "hub.verify_token")] string verifyToken) => {
+    var secret = GetEnv("STRAVA_VERIFY_TOKEN", app.Configuration) ?? "STRAVAI_SECURE_TOKEN";
+    return (mode == "subscribe" && verifyToken == secret) ? Results.Ok(new { hub_challenge = challenge }) : Results.Unauthorized();
+});
+
+app.MapPost("/webhook", async (HttpContext context, IHttpClientFactory clientFactory) => {
+    var body = await new StreamReader(context.Request.Body).ReadToEndAsync();
+    var eventData = JsonSerializer.Deserialize<JsonElement>(body);
+    if (eventData.TryGetProperty("object_type", out var objType) && objType.GetString() == "activity") {
+        SystemState.AddLog($"WEBHOOK: {eventData.GetProperty("aspect_type").GetString()} event for {eventData.GetProperty("object_id")}");
+    }
+    return Results.Ok();
 });
 
 app.Run();
 
 // --- HELPERS ---
 
-async Task<string> RunCoachAnalysis(HttpClient aiClient, JsonElement activity, List<JsonElement> history, IConfiguration config) {
-    var key = ResolveApiKey(config);
-    var prompt = $"Analyze activity vs history. Activity: {JsonSerializer.Serialize(activity)}. History: {JsonSerializer.Serialize(history.Take(10))}";
-    var res = await aiClient.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={key}", new { contents = new[] { new { parts = new[] { new { text = prompt } } } } });
-    var root = await res.Content.ReadFromJsonAsync<JsonElement>();
-    return SafeExtractText(root);
-}
-
 string SafeExtractText(JsonElement root) {
-    if (root.TryGetProperty("error", out var error)) throw new Exception($"AI API Error: {error.GetProperty("message").GetString()}");
-    var candidates = GetRequiredProperty(root, "candidates", "AI_ROOT");
-    var parts = GetRequiredProperty(candidates[0].GetProperty("content"), "parts", "AI_CONTENT");
-    return GetRequiredProperty(parts[0], "text", "AI_PART").GetString() ?? "";
-}
-
-JsonElement GetRequiredProperty(JsonElement element, string name, string context) {
-    if (element.TryGetProperty(name, out var prop)) return prop;
-    var keys = string.Join(", ", element.ValueKind == JsonValueKind.Object ? element.EnumerateObject().Select(p => p.Name) : new[] { "Not an Object" });
-    throw new KeyNotFoundException($"[{context}] Could not find key '{name}'. Found keys: [{keys}]. Raw: {element}");
+    if (root.TryGetProperty("error", out var error)) throw new Exception(error.GetProperty("message").GetString());
+    var text = root.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString() ?? "";
+    
+    // Robust Markdown cleaning
+    if (text.Contains("```")) {
+        var lines = text.Split('\n');
+        var jsonLines = lines.SkipWhile(l => !l.Trim().StartsWith("```"))
+                             .Skip(1)
+                             .TakeWhile(l => !l.Trim().StartsWith("```"));
+        text = string.Join("\n", jsonLines);
+        if (string.IsNullOrWhiteSpace(text)) {
+            // Fallback for cases where splits are weird
+            var s = text.IndexOf("{");
+            var e = text.LastIndexOf("}");
+            if (s >= 0 && e > s) text = text.Substring(s, e - s + 1);
+        }
+    }
+    return text.Trim();
 }
 
 async Task<string?> GetStravaAccessToken(HttpClient client, IConfiguration config) {
@@ -213,15 +207,8 @@ async Task<string?> GetStravaAccessToken(HttpClient client, IConfiguration confi
     return data.TryGetProperty("access_token", out var t) ? t.GetString() : null;
 }
 
-string ResolveApiKey(IConfiguration config) {
-    var k = GetEnv("API_KEY", config);
-    return string.IsNullOrEmpty(k) ? GetEnv("GEMINI_API_KEY", config) : k;
-}
-
-string GetEnv(string key, IConfiguration config) {
-    var v = Environment.GetEnvironmentVariable(key);
-    return string.IsNullOrEmpty(v) ? config[key] ?? "" : v;
-}
+string ResolveApiKey(IConfiguration config) => GetEnv("API_KEY", config) ?? GetEnv("GEMINI_API_KEY", config) ?? "";
+string GetEnv(string key, IConfiguration config) => Environment.GetEnvironmentVariable(key) ?? config[key] ?? "";
 
 public static class SystemState {
     public static ConcurrentQueue<string> Logs { get; } = new();
