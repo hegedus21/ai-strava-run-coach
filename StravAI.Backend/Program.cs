@@ -14,7 +14,7 @@ builder.WebHost.UseUrls($"http://*:{port}");
 
 builder.Services.AddHttpClient();
 builder.Services.AddLogging();
-builder.Services.AddCors(options => options.AddPolicy("AllowAll", p => p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader()));
+builder.Services.AddCors(options => options.AddPolicy("AllowAll", p => p.AllowAnyOrigin().AddAnyMethod().AddAnyHeader()));
 
 var app = builder.Build();
 app.UseCors("AllowAll");
@@ -73,11 +73,11 @@ app.Use(async (context, next) => {
     await next();
 });
 
-app.MapGet("/", () => "StravAI Engine v1.3.9 (Robust Skip) is Online.");
+app.MapGet("/", () => "StravAI Engine v1.0.1-pro-gold is Online.");
 
 app.MapGet("/health", () => Results.Ok(new { 
     status = "healthy", 
-    engine = "StravAI_Core_v1.3.9",
+    engine = "StravAI_Core_v1.0.1_Pro_Gold",
     config = new {
         gemini_ready = !string.IsNullOrEmpty(GetEnv("API_KEY")),
         strava_ready = !string.IsNullOrEmpty(GetEnv("STRAVA_REFRESH_TOKEN"))
@@ -125,8 +125,6 @@ app.MapPost("/sync", (int? hours, IHttpClientFactory clientFactory) => {
             int count = 0;
             foreach (var act in (activities ?? new())) {
                 if (act.TryGetProperty("id", out var idProp) && act.GetProperty("type").GetString() == "Run") {
-                    // Note: List view doesn't have description. We MUST fetch details inside ProcessActivityAsync.
-                    // To avoid overwhelming the API, we fetch and check inside the processor.
                     await ProcessActivityAsync(idProp.GetInt64(), clientFactory);
                     count++;
                 }
@@ -177,25 +175,22 @@ async Task ProcessActivityAsync(long activityId, IHttpClientFactory clientFactor
         if (token == null) return;
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         
-        // FETCH FULL DETAILS (Includes Description)
         var act = await client.GetFromJsonAsync<JsonElement>($"https://www.strava.com/api/v3/activities/{activityId}");
         
         if (act.GetProperty("type").GetString() != "Run") return;
 
         var desc = act.TryGetProperty("description", out var d) ? d.GetString() : "";
         
-        // DEEP CHECK
         if (!NeedsAnalysis(desc)) {
-            // Already analyzed, skip
             return;
         }
 
-        AddLog($"[{tid}] START: Analyzing {activityId}...");
+        AddLog($"[{tid}] START: Analyzing {activityId} (using PRO engine)...");
 
         var hist = await (await client.GetAsync("https://www.strava.com/api/v3/athlete/activities?per_page=12")).Content.ReadAsStringAsync();
         client.DefaultRequestHeaders.Authorization = null;
 
-        var prompt = $"ROLE: Master Performance Running Coach. GOAL: {GetEnv("GOAL_RACE_TYPE")} on {GetEnv("GOAL_RACE_DATE")}.\n" +
+        var prompt = $"ROLE: Master Performance Running Coach (Analytical, Precise). GOAL: {GetEnv("GOAL_RACE_TYPE")} on {GetEnv("GOAL_RACE_DATE")}.\n" +
                      $"TASK: Analyze the current activity: {act.GetRawText()}.\n" +
                      $"HISTORY: {hist}.\n" +
                      "OUTPUT STRUCTURE (STRICT MARKDOWN):\n" +
@@ -213,7 +208,8 @@ async Task ProcessActivityAsync(long activityId, IHttpClientFactory clientFactor
                      "INSTRUCTION: Return ONLY the formatted markdown text.";
 
         var apiKey = GetEnv("API_KEY");
-        var geminiRes = await client.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={apiKey}", new { 
+        // Using gemini-3-pro-preview for advanced performance reasoning
+        var geminiRes = await client.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent?key={apiKey}", new { 
             contents = new[] { new { parts = new[] { new { text = prompt } } } } 
         });
         
@@ -221,8 +217,6 @@ async Task ProcessActivityAsync(long activityId, IHttpClientFactory clientFactor
         var aiText = aiRes.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString();
 
         var timestamp = GetCetTimestamp();
-        
-        // PRESERVE ORIGINAL DESCRIPTION
         var separator = "################################";
         var originalUserText = (desc ?? "").Split(separator)[0].Trim();
         
@@ -231,7 +225,7 @@ async Task ProcessActivityAsync(long activityId, IHttpClientFactory clientFactor
 
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         await client.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{activityId}", new { description = finalDesc });
-        AddLog($"[{tid}] SUCCESS: Activity {activityId} updated.");
+        AddLog($"[{tid}] SUCCESS: Activity {activityId} updated via Pro engine.");
     } catch (Exception ex) { AddLog($"[{tid}] EXCEPTION: {ex.Message}", "ERROR"); }
 }
 
