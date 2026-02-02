@@ -1,1 +1,0 @@
-The Dockerfile is now available in the root of the project as 'Dockerfile'. You no longer need this text file.
