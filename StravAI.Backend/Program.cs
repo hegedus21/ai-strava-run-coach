@@ -14,7 +14,7 @@ builder.WebHost.UseUrls($"http://*:{port}");
 
 builder.Services.AddHttpClient();
 builder.Services.AddLogging();
-builder.Services.AddCors(options => options.AddPolicy("AllowAll", p => p.AllowAnyOrigin().AddAnyMethod().AddAnyHeader()));
+builder.Services.AddCors(options => options.AddPolicy("AllowAll", p => p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader()));
 
 var app = builder.Build();
 app.UseCors("AllowAll");
