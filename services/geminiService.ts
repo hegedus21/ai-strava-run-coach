@@ -1,3 +1,4 @@
+
 import { GoogleGenAI, Type } from "@google/genai";
 import { StravaActivity, AIAnalysis, GoalSettings } from "../types";
 
@@ -24,17 +25,21 @@ export class GeminiCoachService {
    * Strictly skips if it already contains a valid StravAI Report.
    */
   static needsAnalysis(description: string | undefined): boolean {
-    if (!description || description.trim() === "") return true;
+    if (!description) return true;
     
-    const lowerDesc = description.toLowerCase();
-    const hasReport = lowerDesc.includes("stravai report");
-    const hasProcessedTag = lowerDesc.includes(STRAVAI_SIGNATURE.toLowerCase());
+    const trimmed = description.trim().toLowerCase();
+    if (trimmed === "") return true;
     
-    // Exception: If it's a placeholder, we definitely need to analyze it properly
-    if (lowerDesc.includes("activity will be analysed later")) return true;
+    // Check for our signature markers
+    const hasReportHeader = trimmed.includes("stravai report");
+    const hasSignature = trimmed.includes(STRAVAI_SIGNATURE.toLowerCase());
+    const hasAsteriskSignature = trimmed.includes("*[stravai-processed]*");
+    
+    // Exception: If it's a placeholder, we definitely need to re-analyze it
+    if (trimmed.includes("activity will be analysed later")) return true;
 
     // Skip if it meets the criteria of a completed report
-    return !(hasReport || hasProcessedTag);
+    return !(hasReportHeader || hasSignature || hasAsteriskSignature);
   }
 
   async analyzeActivity(
@@ -53,7 +58,6 @@ export class GeminiCoachService {
         
         let prevInsights = "";
         if (h.description && h.description.includes("StravAI Report")) {
-          // Extract the summary to give the AI context of its own previous thoughts
           const match = h.description.match(/\*\*Coach's Summary:\*\*\n(.*?)\n/s);
           if (match) prevInsights = ` | PREV_ANALYSIS: ${match[1].substring(0, 150)}`;
         }
@@ -84,11 +88,10 @@ export class GeminiCoachService {
 
       TASK:
       1. Analyze the performance relative to the goal race. 
-      2. If PREV_ANALYSIS is in history, evaluate if they followed that specific advice.
-      3. Identify strengths (Pros) and areas for improvement (Cons).
-      4. Provide a clear, actionable focus for the next 7 days.
-      5. Prescribe exactly ONE specific session for their next workout.
-      6. OUTPUT: Strictly JSON format.
+      2. Identify strengths (Pros) and areas for improvement (Cons).
+      3. Provide a clear, actionable focus for the next 7 days.
+      4. Prescribe exactly ONE specific session for their next workout.
+      5. OUTPUT: Strictly JSON format.
     `;
 
     while (attempt < maxRetries) {
@@ -158,19 +161,6 @@ export class GeminiCoachService {
       second: '2-digit',
       hour12: false
     }).format(new Date()) + " CET";
-  }
-
-  formatPlaceholder(): string {
-    return `
-${BORDER}
-StravAI Report
----
-${STRAVAI_PLACEHOLDER}
-
-Analysis created at: ${this.getCETTimestamp()}
-*${STRAVAI_SIGNATURE}-PENDING*
-${BORDER}
-    `.trim();
   }
 
   formatDescription(analysis: AIAnalysis): string {
