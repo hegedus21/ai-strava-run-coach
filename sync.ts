@@ -68,7 +68,8 @@ async function runSync() {
       } catch (innerError: any) {
         if (innerError instanceof QuotaExhaustedError) {
           console.error("  ❌ Quota Exhausted.");
-          process.exit(0);
+          // Fix: Type assertion for process.exit to bypass TypeScript environment check in sync script
+          (process as any).exit(0);
         }
         console.error(`  ❌ Error: ${innerError.message}`);
       }
@@ -77,7 +78,8 @@ async function runSync() {
     console.log(`--- Sync Cycle Finished ---`);
   } catch (error: any) {
     console.error("CRITICAL ENGINE ERROR:", error.message);
-    process.exit(1);
+    // Fix: Type assertion for process.exit to bypass TypeScript environment check in sync script
+    (process as any).exit(1);
   }
 }
 

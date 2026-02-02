@@ -1,6 +1,8 @@
 {
   "name": "StravAI Coach",
-  "description": "A secure, free, and automated AI coach that analyzes Strava activities using Gemini and provides training prescriptions.",
+  "version": "1.0.1-pro-gold",
+  "release_state": "Pro Intelligence Stable",
+  "description": "A secure, free, and automated AI coach that analyzes Strava activities using Gemini 3 Pro and provides professional training prescriptions.",
   "requestFramePermissions": [
     "geolocation"
   ]

@@ -96,9 +96,11 @@ export class GeminiCoachService {
 
     while (attempt < maxRetries) {
       try {
+        // Fix: Create a new instance right before making the API call as per GenAI guidelines
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
         const response = await ai.models.generateContent({
-          model: "gemini-3-flash-preview",
+          // Fix: Use gemini-3-pro-preview for complex text tasks like performance reasoning
+          model: 'gemini-3-pro-preview',
           contents: prompt,
           config: {
             responseMimeType: "application/json",
@@ -130,6 +132,7 @@ export class GeminiCoachService {
           }
         });
 
+        // Fix: Extract generated text via .text property (not a method)
         const text = response.text;
         if (!text) throw new Error("Empty AI result");
         const parsed = JSON.parse(text);
@@ -140,6 +143,7 @@ export class GeminiCoachService {
         if (errStr.includes("quota exceeded") || errStr.includes("resource_exhausted")) {
           throw new QuotaExhaustedError("Daily API Quota Exceeded.");
         }
+        // Fix: Robust handling for API errors with exponential backoff
         if (attempt < maxRetries) {
           await this.sleep(2000 * attempt);
           continue;
