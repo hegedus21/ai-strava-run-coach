@@ -1,3 +1,4 @@
+
 using Microsoft.AspNetCore.Mvc;
 using System.Text.Json.Serialization;
 using System.Net.Http.Headers;
@@ -72,11 +73,11 @@ app.Use(async (context, next) => {
     await next();
 });
 
-app.MapGet("/", () => "StravAI Engine v1.3.8 (Ultra Detail) is Online.");
+app.MapGet("/", () => "StravAI Engine v1.3.9 (Robust Skip) is Online.");
 
 app.MapGet("/health", () => Results.Ok(new { 
     status = "healthy", 
-    engine = "StravAI_Core_v1.3.8",
+    engine = "StravAI_Core_v1.3.9",
     config = new {
         gemini_ready = !string.IsNullOrEmpty(GetEnv("API_KEY")),
         strava_ready = !string.IsNullOrEmpty(GetEnv("STRAVA_REFRESH_TOKEN"))
@@ -85,18 +86,21 @@ app.MapGet("/health", () => Results.Ok(new {
 
 app.MapGet("/logs", () => Results.Ok(logs.ToArray()));
 
-// Unified skip logic
+// Unified skip logic - Aggressive check to prevent duplicates
 bool NeedsAnalysis(string? description) {
-    if (string.IsNullOrWhiteSpace(description)) return true;
+    if (description == null) return true;
     
-    string lowerDesc = description.ToLower();
-    bool hasReport = lowerDesc.Contains("stravai report");
+    string lowerDesc = description.ToLower().Trim();
+    if (string.IsNullOrEmpty(lowerDesc)) return true;
+
+    bool hasReportHeader = lowerDesc.Contains("stravai report");
     bool hasProcessedTag = lowerDesc.Contains("[stravai-processed]");
+    bool hasAsteriskTag = lowerDesc.Contains("*[stravai-processed]*");
     
-    // Exception: Placeholder from previous failed analysis
+    // Placeholder from previous attempt
     if (lowerDesc.Contains("activity will be analysed later")) return true;
 
-    return !(hasReport || hasProcessedTag);
+    return !(hasReportHeader || hasProcessedTag || hasAsteriskTag);
 }
 
 // Sync Handlers
@@ -121,14 +125,13 @@ app.MapPost("/sync", (int? hours, IHttpClientFactory clientFactory) => {
             int count = 0;
             foreach (var act in (activities ?? new())) {
                 if (act.TryGetProperty("id", out var idProp) && act.GetProperty("type").GetString() == "Run") {
-                    var desc = act.TryGetProperty("description", out var d) ? d.GetString() : "";
-                    if (NeedsAnalysis(desc)) {
-                        await ProcessActivityAsync(idProp.GetInt64(), clientFactory);
-                        count++;
-                    }
+                    // Note: List view doesn't have description. We MUST fetch details inside ProcessActivityAsync.
+                    // To avoid overwhelming the API, we fetch and check inside the processor.
+                    await ProcessActivityAsync(idProp.GetInt64(), clientFactory);
+                    count++;
                 }
             }
-            AddLog($"SYNC_FINISH: {count} activities processed.");
+            AddLog($"SYNC_FINISH: Scanning queue processed.");
         } catch (Exception ex) { AddLog($"SYNC_ERR: {ex.Message}", "ERROR"); }
     });
     return Results.Accepted();
@@ -173,15 +176,21 @@ async Task ProcessActivityAsync(long activityId, IHttpClientFactory clientFactor
         var token = await GetStravaAccessToken(client);
         if (token == null) return;
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        
+        // FETCH FULL DETAILS (Includes Description)
         var act = await client.GetFromJsonAsync<JsonElement>($"https://www.strava.com/api/v3/activities/{activityId}");
         
         if (act.GetProperty("type").GetString() != "Run") return;
 
         var desc = act.TryGetProperty("description", out var d) ? d.GetString() : "";
+        
+        // DEEP CHECK
         if (!NeedsAnalysis(desc)) {
-            AddLog($"[{tid}] IGNORE: {activityId} already has report.");
+            // Already analyzed, skip
             return;
         }
+
+        AddLog($"[{tid}] START: Analyzing {activityId}...");
 
         var hist = await (await client.GetAsync("https://www.strava.com/api/v3/athlete/activities?per_page=12")).Content.ReadAsStringAsync();
         client.DefaultRequestHeaders.Authorization = null;
@@ -191,7 +200,7 @@ async Task ProcessActivityAsync(long activityId, IHttpClientFactory clientFactor
                      $"HISTORY: {hist}.\n" +
                      "OUTPUT STRUCTURE (STRICT MARKDOWN):\n" +
                      "**Coach's Summary**\n" +
-                     "[One deep paragraph analyzing biomechanics (cadence), efficiency (Pace/HR), and execution].\n\n" +
+                     "[One deep paragraph analyzing biomechanics, efficiency, and execution].\n\n" +
                      "**Race Readiness & Countdown**\n" +
                      "* **Race Readiness:** [X]% [One sentence reasoning].\n" +
                      "* **T-Minus:** [Days] Days\n\n" +
@@ -200,10 +209,7 @@ async Task ProcessActivityAsync(long activityId, IHttpClientFactory clientFactor
                      "**Next Training Step**\n" +
                      "* **Workout:** [Session Title]\n" +
                      "* **Target:** [Pace, HR, and Power targets]\n" +
-                     "* **Focus:** [Specific coaching cue or nutrition advice].\n\n" +
-                     "**Progression Note**\n" +
-                     "[Compare today's data (Pace-to-HR ratio) with a specific date in history. Use analytical terms like 'structural integrity' or 'aerobic decoupling'].\n\n" +
-                     "TONE: Highly professional, analytical, and data-driven.\n" +
+                     "* **Focus:** [Specific coaching cue].\n\n" +
                      "INSTRUCTION: Return ONLY the formatted markdown text.";
 
         var apiKey = GetEnv("API_KEY");
@@ -215,11 +221,17 @@ async Task ProcessActivityAsync(long activityId, IHttpClientFactory clientFactor
         var aiText = aiRes.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString();
 
         var timestamp = GetCetTimestamp();
-        var finalDesc = $"################################\nStravAI Report\n---\n{aiText}\n\nAnalysis created at: {timestamp} CET\n*[StravAI-Processed]*\n################################";
+        
+        // PRESERVE ORIGINAL DESCRIPTION
+        var separator = "################################";
+        var originalUserText = (desc ?? "").Split(separator)[0].Trim();
+        
+        var finalDesc = (string.IsNullOrEmpty(originalUserText) ? "" : originalUserText + "\n\n") + 
+                        $"{separator}\nStravAI Report\n---\n{aiText}\n\nAnalysis created at: {timestamp} CET\n*[StravAI-Processed]*\n{separator}";
 
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         await client.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{activityId}", new { description = finalDesc });
-        AddLog($"[{tid}] SUCCESS: High-fidelity report written to {activityId}.");
+        AddLog($"[{tid}] SUCCESS: Activity {activityId} updated.");
     } catch (Exception ex) { AddLog($"[{tid}] EXCEPTION: {ex.Message}", "ERROR"); }
 }
 
