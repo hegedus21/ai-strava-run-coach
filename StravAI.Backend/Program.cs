@@ -12,7 +12,6 @@ var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
 builder.WebHost.UseUrls($"http://*:{port}");
 
 // Configured HttpClient with an increased timeout for deep AI analysis
-// Fixed: Use an empty string for the default client name to avoid build errors
 builder.Services.AddHttpClient("", client => {
     client.Timeout = TimeSpan.FromMinutes(5);
 });
@@ -199,7 +198,6 @@ async Task ProcessActivityAsync(long activityId, IHttpClientFactory clientFactor
 
         logger($"[{tid}] START: Analyzing {activityId} (using Flash-Preview)...", "INFO");
         
-        // Optimize: Summarize history instead of sending raw JSON to avoid timeouts and reduce token usage
         var histRaw = await client.GetFromJsonAsync<List<JsonElement>>("https://www.strava.com/api/v3/athlete/activities?per_page=12");
         var histSummary = summarizer(histRaw ?? new());
         
@@ -250,7 +248,7 @@ public static class SeasonStrategyEngine {
         }
 
         try {
-            LocalLog("[STEP 1/5] Initiating Deep History Analysis (Target: 500 Activities)...");
+            LocalLog("[STEP 1/5] Initiating Deep History Analysis (Target: 1000 Activities)...");
             using var client = clientFactory.CreateClient();
             
             LocalLog("Authenticating with Strava API...");
@@ -267,18 +265,19 @@ public static class SeasonStrategyEngine {
             
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
             
-            LocalLog("[STEP 2/5] Starting multi-page data fetch...");
+            LocalLog("[STEP 2/5] Starting multi-page data fetch (Full Season Context)...");
             var allActivities = new List<JsonElement>();
-            for (int page = 1; page <= 3; page++) {
-                LocalLog($"Fetching page {page} (Depth: {allActivities.Count}/500)...");
+            // Expanded loop to fetch up to 1000 activities (5 pages of 200)
+            for (int page = 1; page <= 5; page++) {
+                LocalLog($"Fetching page {page} (Current depth: {allActivities.Count}/1000)...");
                 var pageRes = await client.GetFromJsonAsync<List<JsonElement>>($"https://www.strava.com/api/v3/athlete/activities?per_page=200&page={page}");
                 if (pageRes == null || pageRes.Count == 0) break;
                 allActivities.AddRange(pageRes);
-                if (allActivities.Count >= 500) break;
+                if (allActivities.Count >= 1000) break;
             }
 
             LocalLog($"[STEP 3/5] Compressing {allActivities.Count} data points for AI context...");
-            var historySummary = string.Join("\n", allActivities.Take(500).Select(a => {
+            var historySummary = string.Join("\n", allActivities.Take(1000).Select(a => {
                 var type = a.TryGetProperty("type", out var t) ? t.GetString() : "Unknown";
                 var date = a.TryGetProperty("start_date", out var d) ? d.GetString() : "Unknown";
                 var dist = a.TryGetProperty("distance", out var distP) ? distP.GetDouble() / 1000 : 0;
@@ -291,7 +290,7 @@ public static class SeasonStrategyEngine {
             LocalLog($"[STEP 4/5] Engaging Gemini 3 Flash (High-Speed Reasoning Engine)...");
             var prompt = $@"ROLE: Elite Ultra-Running Strategy Consultant.
 ATHLETE GOAL: {envGetter("GOAL_RACE_TYPE")} on {envGetter("GOAL_RACE_DATE")} (Target Time: {envGetter("GOAL_RACE_TIME")}).
-HISTORY CONTEXT (Up to 500 Activities):
+HISTORY CONTEXT (Up to 1000 Activities - FULL HISTORY):
 {historySummary}
 
 TASK: Perform a deep physiological and logistical analysis to generate a SEASON STRATEGY.
@@ -299,27 +298,27 @@ TASK: Perform a deep physiological and logistical analysis to generate a SEASON 
 REQUIRED SECTIONS IN OUTPUT (Markdown):
 
 1. EXECUTIVE SUMMARY:
-   A high-level overview of current fitness based on 500-activity history trends.
+   A high-level overview of fitness trends based on the full activity history provided.
 
 2. RACE PACE STRATEGY (3 TIERS):
-   - OPTIMISTIC (Everything is perfect): Realistic Target Pace (min/km), Target SPM (Cadence), Target Heart Rate (bpm).
-   - REALISTIC (Based on current data): Recommended Pace, SPM, and HR.
-   - PESSIMISTIC (Weak/Sick conditions): Minimum Pace, SPM, and HR required to finish under cutoff.
+   - OPTIMISTIC: Target Pace, Cadence, and HR for perfect conditions.
+   - REALISTIC: Expected metrics based on typical performance data.
+   - PESSIMISTIC: Minimum thresholds to maintain to clear race cutoffs.
 
 3. NUTRITION & REFRESHMENT PLAN:
-   Detailed plan on what to eat/drink, specific quantities (e.g., carbs/hour), and exact frequency (e.g., every 30-45 mins).
+   Detailed hydration/nutrition strategy, carbs/hour, and frequency.
 
 4. LOGISTICS & GEAR STRATEGY:
-   - WHAT TO CARRY: Mandatory and recommended gear.
-   - AID STATION SWAPS: Specific points/times to grab headlamp, powerbank, change shoes, or change clothes based on race progression.
+   - WHAT TO CARRY: Required/recommended gear.
+   - AID STATION SWAPS: Timing for gear/shoe swaps based on race duration.
 
 5. REMAINING SEASON FOCUS:
-   Training themes and focuses for the remaining weeks (e.g., vertical gain, heat acclimation, volume).
+   Key training themes (Vertical, Heat, Recovery, or Speed).
 
 6. NEXT 7 DAYS - ACTION PLAN:
-   A concrete training plan for the immediate next 7 days, specifying type, distance/duration, and purpose for each session.
+   A concrete daily training plan for the immediate next 7 days.
 
-INSTRUCTION: Provide the response in a professional, coaching tone. Use Markdown headers and lists.";
+INSTRUCTION: Provide the response in a professional coaching tone. Use Markdown.";
 
             client.DefaultRequestHeaders.Authorization = null;
             var apiKey = envGetter("API_KEY");
@@ -355,7 +354,6 @@ INSTRUCTION: Provide the response in a professional, coaching tone. Use Markdown
                             if (act.TryGetProperty("name", out var nProp) && nProp.GetString()?.Contains("[StravAI] SEASON_PLAN") == true) {
                                 if (act.TryGetProperty("id", out var idProp)) {
                                     storageId = idProp.GetInt64();
-                                    LocalLog($"Found existing strategy storage: {storageId}");
                                     break;
                                 }
                             }
@@ -363,7 +361,6 @@ INSTRUCTION: Provide the response in a professional, coaching tone. Use Markdown
                     }
 
                     if (!storageId.HasValue) {
-                        LocalLog("Storage activity missing. Creating new Jan 1st placeholder...");
                         var createRes = await client.PostAsJsonAsync("https://www.strava.com/api/v3/activities", new {
                             name = $"[StravAI] SEASON_PLAN_PRO_GOLD ({DateTime.UtcNow.Year})",
                             type = "Workout",
@@ -374,24 +371,15 @@ INSTRUCTION: Provide the response in a professional, coaching tone. Use Markdown
                         if (createRes.IsSuccessStatusCode) {
                             var newAct = await createRes.Content.ReadFromJsonAsync<JsonElement>();
                             if (newAct.TryGetProperty("id", out var idProp)) storageId = idProp.GetInt64();
-                        } else {
-                            LocalLog($"Failed to create storage activity: {createRes.StatusCode}", "ERROR");
                         }
                     }
 
                     if (storageId.HasValue) {
                         var finalReport = $"# SEASON STRATEGY\nUpdated: {timeGetter()} CET\n\n{aiText}\n\n*[StravAI-Processed]*";
-                        var updateRes = await client.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{storageId.Value}", new { description = finalReport });
-                        if (updateRes.IsSuccessStatusCode) LocalLog($"SUCCESS: Season strategy updated (ID: {storageId.Value}).", "SUCCESS");
-                        else LocalLog($"Failed to update Strava description: {updateRes.StatusCode}", "ERROR");
-                    } else {
-                        LocalLog("ERROR: Could not resolve storage activity ID.", "ERROR");
+                        await client.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{storageId.Value}", new { description = finalReport });
+                        LocalLog($"SUCCESS: Season strategy updated (ID: {storageId.Value}).", "SUCCESS");
                     }
-                } else {
-                    LocalLog("AI ERROR: Response parts missing. Likely a safety block.", "ERROR");
                 }
-            } else {
-                LocalLog("AI ERROR: No candidates returned in JSON response.", "ERROR");
             }
         } catch (Exception ex) { LocalLog($"CRITICAL ENGINE ERROR: {ex.Message}", "ERROR"); }
     }
