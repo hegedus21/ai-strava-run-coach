@@ -13,7 +13,7 @@ builder.WebHost.UseUrls($"http://*:{port}");
 
 builder.Services.AddHttpClient();
 builder.Services.AddLogging();
-builder.Services.AddCors(options => options.AddPolicy("AllowAll", p => p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader()));
+builder.Services.AddCors(options => options.AddPolicy("AllowAll", p => p.AllowAnyOrigin().AddMethods("GET", "POST", "PUT", "DELETE", "OPTIONS").AllowAnyHeader()));
 
 // Simple in-memory log buffer for the Command Center UI
 var logs = new ConcurrentQueue<string>();
@@ -284,9 +284,6 @@ public static class SeasonStrategyEngine {
             if (!geminiRes.IsSuccessStatusCode) {
                 var errContent = await geminiRes.Content.ReadAsStringAsync();
                 LocalLog($"AI API FAILED ({geminiRes.StatusCode}): {errContent}", "ERROR");
-                if (geminiRes.StatusCode == System.Net.HttpStatusCode.TooManyRequests) {
-                    LocalLog("SUGGESTION: Your project quota for the AI is exhausted. Check ai.google.dev/gemini-api/docs/rate-limits", "INFO");
-                }
                 return;
             }
 
@@ -301,13 +298,23 @@ public static class SeasonStrategyEngine {
                     client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
                     var startOfYear = new DateTime(DateTime.UtcNow.Year, 1, 1, 10, 0, 0, DateTimeKind.Utc);
                     long? storageId = null;
+                    
                     var janActivities = await client.GetFromJsonAsync<List<JsonElement>>($"https://www.strava.com/api/v3/athlete/activities?before={new DateTimeOffset(startOfYear.AddDays(2)).ToUnixTimeSeconds()}&after={new DateTimeOffset(startOfYear.AddDays(-2)).ToUnixTimeSeconds()}");
                     
-                    var existing = janActivities?.FirstOrDefault(a => a.TryGetProperty("name", out var n) && n.GetString()?.Contains("[StravAI] SEASON_PLAN") == true);
-                    
-                    if (existing.HasValue && existing.Value.TryGetProperty("id", out var idProp)) {
-                        storageId = idProp.GetInt64();
-                    } else {
+                    if (janActivities != null) {
+                        foreach (var act in janActivities) {
+                            if (act.ValueKind != JsonValueKind.Object) continue;
+                            if (act.TryGetProperty("name", out var nProp) && nProp.GetString()?.Contains("[StravAI] SEASON_PLAN") == true) {
+                                if (act.TryGetProperty("id", out var idProp)) {
+                                    storageId = idProp.GetInt64();
+                                    LocalLog($"Found existing strategy storage: {storageId}");
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
+                    if (!storageId.HasValue) {
                         LocalLog("Storage activity missing. Creating new Jan 1st placeholder...");
                         var createRes = await client.PostAsJsonAsync("https://www.strava.com/api/v3/activities", new {
                             name = $"[StravAI] SEASON_PLAN_PRO_GOLD ({DateTime.UtcNow.Year})",
@@ -318,7 +325,9 @@ public static class SeasonStrategyEngine {
                         });
                         if (createRes.IsSuccessStatusCode) {
                             var newAct = await createRes.Content.ReadFromJsonAsync<JsonElement>();
-                            storageId = newAct.GetProperty("id").GetInt64();
+                            if (newAct.TryGetProperty("id", out var idProp)) storageId = idProp.GetInt64();
+                        } else {
+                            LocalLog($"Failed to create storage activity: {createRes.StatusCode}", "ERROR");
                         }
                     }
 
@@ -327,6 +336,8 @@ public static class SeasonStrategyEngine {
                         var updateRes = await client.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{storageId.Value}", new { description = finalReport });
                         if (updateRes.IsSuccessStatusCode) LocalLog($"SUCCESS: Season strategy updated (ID: {storageId.Value}).", "SUCCESS");
                         else LocalLog($"Failed to update Strava description: {updateRes.StatusCode}", "ERROR");
+                    } else {
+                        LocalLog("ERROR: Could not resolve storage activity ID.", "ERROR");
                     }
                 } else {
                     LocalLog("AI ERROR: Response parts missing. Likely a safety block.", "ERROR");
