@@ -35,7 +35,12 @@ string GetEnv(string key) {
         val = Environment.GetEnvironmentVariable("GEMINI_API_KEY");
         if (!string.IsNullOrEmpty(val)) return val;
     }
-    return app.Configuration[key] ?? "";
+    // Safe configuration access
+    try {
+        return app.Configuration[key] ?? "";
+    } catch {
+        return "";
+    }
 }
 
 void AddLog(string message, string level = "INFO") {
@@ -109,7 +114,7 @@ app.MapPost("/sync", (int? hours, IHttpClientFactory clientFactory) => {
             }
             var activities = await client.GetFromJsonAsync<List<JsonElement>>(url);
             foreach (var act in (activities ?? new())) {
-                if (act.TryGetProperty("id", out var idProp) && act.GetProperty("type").GetString() == "Run") {
+                if (act.TryGetProperty("id", out var idProp) && act.TryGetProperty("type", out var typeProp) && typeProp.GetString() == "Run") {
                     await ProcessActivityAsync(idProp.GetInt64(), clientFactory, GetEnv, AddLog, GetCetTimestamp);
                 }
             }
@@ -159,7 +164,7 @@ async Task<string?> GetStravaAccessToken(HttpClient client, Func<string, string>
         }));
         if (!authRes.IsSuccessStatusCode) return null;
         var data = await authRes.Content.ReadFromJsonAsync<JsonElement>();
-        return data.GetProperty("access_token").GetString();
+        return data.TryGetProperty("access_token", out var tokenProp) ? tokenProp.GetString() : null;
     } catch { return null; }
 }
 
@@ -189,13 +194,22 @@ async Task ProcessActivityAsync(long activityId, IHttpClientFactory clientFactor
         var geminiRes = await client.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent?key={apiKey}", new { 
             contents = new[] { new { parts = new[] { new { text = prompt } } } } 
         });
-        var aiRes = await geminiRes.Content.ReadFromJsonAsync<JsonElement>();
-        var aiText = aiRes.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString();
+        
+        if (!geminiRes.IsSuccessStatusCode) {
+             logger($"[{tid}] AI API ERROR: {geminiRes.StatusCode}", "ERROR");
+             return;
+        }
 
-        var finalDesc = (desc?.Split("###")[0].Trim() ?? "") + $"\n\n################################\nStravAI Report\n---\n{aiText}\n\nAnalysis: {timeGetter()} CET\n*[StravAI-Processed]*\n################################";
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        await client.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{activityId}", new { description = finalDesc });
-        logger($"[{tid}] SUCCESS: Activity {activityId} updated.", "SUCCESS");
+        var aiRes = await geminiRes.Content.ReadFromJsonAsync<JsonElement>();
+        if (aiRes.TryGetProperty("candidates", out var candidates) && candidates.GetArrayLength() > 0) {
+            var aiText = candidates[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString();
+            var finalDesc = (desc?.Split("###")[0].Trim() ?? "") + $"\n\n################################\nStravAI Report\n---\n{aiText}\n\nAnalysis: {timeGetter()} CET\n*[StravAI-Processed]*\n################################";
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            await client.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{activityId}", new { description = finalDesc });
+            logger($"[{tid}] SUCCESS: Activity {activityId} updated.", "SUCCESS");
+        } else {
+            logger($"[{tid}] AI ERROR: No candidates returned. Check API Key or safety filters.", "ERROR");
+        }
     } catch (Exception ex) { logger($"[{tid}] ERROR: {ex.Message}", "ERROR"); }
 }
 
@@ -222,28 +236,29 @@ public static class SeasonStrategyEngine {
                 new KeyValuePair<string, string>("refresh_token", envGetter("STRAVA_REFRESH_TOKEN")),
                 new KeyValuePair<string, string>("grant_type", "refresh_token")
             }));
-            if (!authRes.IsSuccessStatusCode) { LocalLog("CRITICAL: Authentication failed.", "ERROR"); return; }
+            if (!authRes.IsSuccessStatusCode) { LocalLog("CRITICAL: Authentication failed. Verify Strava credentials.", "ERROR"); return; }
             var authData = await authRes.Content.ReadFromJsonAsync<JsonElement>();
-            var token = authData.GetProperty("access_token").GetString();
+            if (!authData.TryGetProperty("access_token", out var tokenProp)) { LocalLog("CRITICAL: Access token missing in Strava response.", "ERROR"); return; }
+            var token = tokenProp.GetString();
             
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
             
             LocalLog("[STEP 2/5] Starting multi-page data fetch...");
             var allActivities = new List<JsonElement>();
             for (int page = 1; page <= 3; page++) {
-                LocalLog($"Fetching page {page} of athlete history...");
+                LocalLog($"Fetching page {page}...");
                 var pageRes = await client.GetFromJsonAsync<List<JsonElement>>($"https://www.strava.com/api/v3/athlete/activities?per_page=200&page={page}");
                 if (pageRes == null || pageRes.Count == 0) break;
                 allActivities.AddRange(pageRes);
-                LocalLog($"Retrieved {pageRes.Count} items. Total buffer: {allActivities.Count}.");
+                LocalLog($"Retrieved {pageRes.Count} items. Total: {allActivities.Count}.");
                 if (allActivities.Count >= 500) break;
             }
 
             LocalLog($"[STEP 3/5] Compressing {allActivities.Count} data points for AI context...");
             var historySummary = string.Join("\n", allActivities.Take(500).Select(a => {
-                var type = a.GetProperty("type").GetString();
-                var date = a.GetProperty("start_date").GetString();
-                var dist = a.TryGetProperty("distance", out var d) ? d.GetDouble() / 1000 : 0;
+                var type = a.TryGetProperty("type", out var t) ? t.GetString() : "Unknown";
+                var date = a.TryGetProperty("start_date", out var d) ? d.GetString() : "Unknown";
+                var dist = a.TryGetProperty("distance", out var distP) ? distP.GetDouble() / 1000 : 0;
                 var speed = a.TryGetProperty("average_speed", out var s) ? s.GetDouble() : 0;
                 var pace = speed > 0 ? (16.6667 / speed) : 0;
                 var hr = a.TryGetProperty("average_heartrate", out var h) ? h.GetDouble().ToString() : "N/A";
@@ -258,35 +273,57 @@ public static class SeasonStrategyEngine {
 
             client.DefaultRequestHeaders.Authorization = null;
             var apiKey = envGetter("API_KEY");
+            if (string.IsNullOrEmpty(apiKey)) { LocalLog("CRITICAL: GEMINI_API_KEY is missing.", "ERROR"); return; }
+
             var geminiRes = await client.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-preview:generateContent?key={apiKey}", new { 
                 contents = new[] { new { parts = new[] { new { text = prompt } } } } 
             });
-            var aiRes = await geminiRes.Content.ReadFromJsonAsync<JsonElement>();
-            var aiText = aiRes.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString();
-
-            LocalLog("[STEP 5/5] Synchronizing strategy with Strava Storage Activity...");
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            var startOfYear = new DateTime(DateTime.UtcNow.Year, 1, 1, 10, 0, 0, DateTimeKind.Utc);
-            long? storageId = null;
-            var janActivities = await client.GetFromJsonAsync<List<JsonElement>>($"https://www.strava.com/api/v3/athlete/activities?before={new DateTimeOffset(startOfYear.AddDays(2)).ToUnixTimeSeconds()}&after={new DateTimeOffset(startOfYear.AddDays(-2)).ToUnixTimeSeconds()}");
-            var existing = janActivities?.FirstOrDefault(a => a.GetProperty("name").GetString()?.Contains("[StravAI] SEASON_PLAN") == true);
             
-            if (existing.HasValue) storageId = existing.Value.GetProperty("id").GetInt64();
-            else {
-                var createRes = await client.PostAsJsonAsync("https://www.strava.com/api/v3/activities", new {
-                    name = $"[StravAI] SEASON_PLAN_PRO_GOLD ({DateTime.UtcNow.Year})",
-                    type = "Workout",
-                    start_date_local = startOfYear.ToString("yyyy-MM-ddTHH:mm:ssZ"),
-                    elapsed_time = 1,
-                    @private = true
-                });
-                if (createRes.IsSuccessStatusCode) storageId = (await createRes.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetInt64();
+            if (!geminiRes.IsSuccessStatusCode) {
+                var errContent = await geminiRes.Content.ReadAsStringAsync();
+                LocalLog($"AI API FAILED ({geminiRes.StatusCode}): {errContent}", "ERROR");
+                return;
             }
 
-            if (storageId.HasValue) {
-                var finalReport = $"# SEASON STRATEGY\nUpdated: {timeGetter()} CET\n\n{aiText}\n\n*[StravAI-Processed]*";
-                await client.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{storageId.Value}", new { description = finalReport });
-                LocalLog($"SUCCESS: Season strategy updated (ID: {storageId.Value}).", "SUCCESS");
+            var aiRes = await geminiRes.Content.ReadFromJsonAsync<JsonElement>();
+            if (aiRes.TryGetProperty("candidates", out var candidates) && candidates.GetArrayLength() > 0) {
+                var aiText = candidates[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString();
+                LocalLog("AI Analysis complete.");
+
+                LocalLog("[STEP 5/5] Synchronizing strategy with Strava Storage Activity...");
+                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+                var startOfYear = new DateTime(DateTime.UtcNow.Year, 1, 1, 10, 0, 0, DateTimeKind.Utc);
+                long? storageId = null;
+                var janActivities = await client.GetFromJsonAsync<List<JsonElement>>($"https://www.strava.com/api/v3/athlete/activities?before={new DateTimeOffset(startOfYear.AddDays(2)).ToUnixTimeSeconds()}&after={new DateTimeOffset(startOfYear.AddDays(-2)).ToUnixTimeSeconds()}");
+                
+                var existing = janActivities?.FirstOrDefault(a => a.TryGetProperty("name", out var n) && n.GetString()?.Contains("[StravAI] SEASON_PLAN") == true);
+                
+                if (existing.HasValue && existing.Value.TryGetProperty("id", out var idProp)) {
+                    storageId = idProp.GetInt64();
+                } else {
+                    var createRes = await client.PostAsJsonAsync("https://www.strava.com/api/v3/activities", new {
+                        name = $"[StravAI] SEASON_PLAN_PRO_GOLD ({DateTime.UtcNow.Year})",
+                        type = "Workout",
+                        start_date_local = startOfYear.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                        elapsed_time = 1,
+                        @private = true
+                    });
+                    if (createRes.IsSuccessStatusCode) {
+                        var newAct = await createRes.Content.ReadFromJsonAsync<JsonElement>();
+                        storageId = newAct.GetProperty("id").GetInt64();
+                    }
+                }
+
+                if (storageId.HasValue) {
+                    var finalReport = $"# SEASON STRATEGY\nUpdated: {timeGetter()} CET\n\n{aiText}\n\n*[StravAI-Processed]*";
+                    var updateRes = await client.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{storageId.Value}", new { description = finalReport });
+                    if (updateRes.IsSuccessStatusCode) LocalLog($"SUCCESS: Season strategy updated (ID: {storageId.Value}).", "SUCCESS");
+                    else LocalLog($"Failed to update activity description: {updateRes.StatusCode}", "ERROR");
+                } else {
+                    LocalLog("ERROR: Could not find or create a storage activity on Strava.", "ERROR");
+                }
+            } else {
+                LocalLog("AI ERROR: Response did not contain candidates. Check API usage limits.", "ERROR");
             }
         } catch (Exception ex) { LocalLog($"CRITICAL ENGINE ERROR: {ex.Message}", "ERROR"); }
     }
