@@ -13,7 +13,7 @@ builder.WebHost.UseUrls($"http://*:{port}");
 
 builder.Services.AddHttpClient();
 builder.Services.AddLogging();
-builder.Services.AddCors(options => options.AddPolicy("AllowAll", p => p.AllowAnyOrigin().AddMethods("GET", "POST", "PUT", "DELETE", "OPTIONS").AllowAnyHeader()));
+builder.Services.AddCors(options => options.AddPolicy("AllowAll", p => p.AllowAnyOrigin().WithMethods("GET", "POST", "PUT", "DELETE", "OPTIONS").AllowAnyHeader()));
 
 // Simple in-memory log buffer for the Command Center UI
 var logs = new ConcurrentQueue<string>();
