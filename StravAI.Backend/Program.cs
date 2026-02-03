@@ -268,10 +268,37 @@ public static class SeasonStrategyEngine {
             }));
 
             LocalLog($"[STEP 4/5] Engaging Gemini 3 Flash (High-Speed Reasoning Engine)...");
-            var prompt = $"ROLE: Elite Ultra-Running Strategy Consultant.\n" +
-                         $"ATHLETE GOAL: {envGetter("GOAL_RACE_TYPE")} on {envGetter("GOAL_RACE_DATE")} (Target: {envGetter("GOAL_RACE_TIME")}).\n" +
-                         $"HISTORY CONTEXT (500 ACTIVITIES):\n{historySummary}\n\n" +
-                         $"TASK: Synthesize this data into a professional Season Strategy report.";
+            var prompt = $@"ROLE: Elite Ultra-Running Strategy Consultant.
+ATHLETE GOAL: {envGetter("GOAL_RACE_TYPE")} on {envGetter("GOAL_RACE_DATE")} (Target Time: {envGetter("GOAL_RACE_TIME")}).
+HISTORY CONTEXT (Up to 500 Activities):
+{historySummary}
+
+TASK: Perform a deep physiological and logistical analysis to generate a SEASON STRATEGY.
+
+REQUIRED SECTIONS IN OUTPUT (Markdown):
+
+1. EXECUTIVE SUMMARY:
+   A high-level overview of current fitness based on 500-activity history trends.
+
+2. RACE PACE STRATEGY (3 TIERS):
+   - OPTIMISTIC (Everything is perfect): Target Pace (min/km), Target SPM (Cadence), Target HR (bpm).
+   - REALISTIC (Based on current data): Target Pace, Target SPM, Target HR.
+   - PESSIMISTIC (Weak/Unexpected conditions): Target Pace, Target SPM, Target HR. Ensure this plan beats any race cutoff times.
+
+3. NUTRITION & REFRESHMENT PLAN:
+   Detailed plan on what to eat/drink, specific quantities (e.g., carbs/hour), and exact frequency (e.g., every 30 mins).
+
+4. LOGISTICS & GEAR STRATEGY:
+   - WHAT TO CARRY: Mandatory and recommended gear.
+   - AID STATION SWAPS: Specific points/times to grab headlamp, powerbank, change shoes, or change clothes based on the goal race duration.
+
+5. REMAINING SEASON FOCUS:
+   Broad training themes and physiological focuses for the remaining weeks until race day.
+
+6. NEXT 7 DAYS - ACTION PLAN:
+   A concrete training plan for the immediate next 7 days, specifying type, distance, and purpose for each session.
+
+INSTRUCTION: Provide the response in a professional, coaching tone. Use Markdown headers and lists.";
 
             client.DefaultRequestHeaders.Authorization = null;
             var apiKey = envGetter("API_KEY");
