@@ -1,4 +1,3 @@
-
 import { GoogleGenAI, Type } from "@google/genai";
 import { StravaActivity, AIAnalysis, GoalSettings } from "../types";
 
@@ -98,7 +97,6 @@ export class GeminiCoachService {
       try {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
         const response = await ai.models.generateContent({
-          // Switched to flash-preview to avoid quota issues seen with Pro model
           model: 'gemini-3-flash-preview',
           contents: prompt,
           config: {
