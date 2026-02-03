@@ -12,7 +12,8 @@ var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
 builder.WebHost.UseUrls($"http://*:{port}");
 
 // Configured HttpClient with an increased timeout for deep AI analysis
-builder.Services.AddHttpClient(System.Net.Http.Options.DefaultName, client => {
+// Fixed: Use an empty string for the default client name to avoid build errors
+builder.Services.AddHttpClient("", client => {
     client.Timeout = TimeSpan.FromMinutes(5);
 });
 builder.Services.AddLogging();
@@ -210,7 +211,6 @@ async Task ProcessActivityAsync(long activityId, IHttpClientFactory clientFactor
                      "INSTRUCTION: Return Markdown with Summary, Race Readiness %, T-Minus, Next Week Focus, and Next Training Step. Be analytical and encouraging.";
 
         var apiKey = envGetter("API_KEY");
-        // Use gemini-3-flash-preview as requested for speed and availability
         var geminiRes = await client.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={apiKey}", new { 
             contents = new[] { new { parts = new[] { new { text = prompt } } } } 
         });
@@ -302,22 +302,22 @@ REQUIRED SECTIONS IN OUTPUT (Markdown):
    A high-level overview of current fitness based on 500-activity history trends.
 
 2. RACE PACE STRATEGY (3 TIERS):
-   - OPTIMISTIC (Everything is perfect): Target Pace (min/km), Target SPM (Cadence), Target HR (bpm).
-   - REALISTIC (Based on current data): Target Pace, Target SPM, Target HR.
-   - PESSIMISTIC (Weak/Unexpected conditions): Target Pace, Target SPM, Target HR. Ensure this plan beats any race cutoff times.
+   - OPTIMISTIC (Everything is perfect): Realistic Target Pace (min/km), Target SPM (Cadence), Target Heart Rate (bpm).
+   - REALISTIC (Based on current data): Recommended Pace, SPM, and HR.
+   - PESSIMISTIC (Weak/Sick conditions): Minimum Pace, SPM, and HR required to finish under cutoff.
 
 3. NUTRITION & REFRESHMENT PLAN:
-   Detailed plan on what to eat/drink, specific quantities (e.g., carbs/hour), and exact frequency (e.g., every 30 mins).
+   Detailed plan on what to eat/drink, specific quantities (e.g., carbs/hour), and exact frequency (e.g., every 30-45 mins).
 
 4. LOGISTICS & GEAR STRATEGY:
    - WHAT TO CARRY: Mandatory and recommended gear.
-   - AID STATION SWAPS: Specific points/times to grab headlamp, powerbank, change shoes, or change clothes based on the goal race duration.
+   - AID STATION SWAPS: Specific points/times to grab headlamp, powerbank, change shoes, or change clothes based on race progression.
 
 5. REMAINING SEASON FOCUS:
-   Broad training themes and physiological focuses for the remaining weeks until race day.
+   Training themes and focuses for the remaining weeks (e.g., vertical gain, heat acclimation, volume).
 
 6. NEXT 7 DAYS - ACTION PLAN:
-   A concrete training plan for the immediate next 7 days, specifying type, distance, and purpose for each session.
+   A concrete training plan for the immediate next 7 days, specifying type, distance/duration, and purpose for each session.
 
 INSTRUCTION: Provide the response in a professional, coaching tone. Use Markdown headers and lists.";
 
