@@ -11,7 +11,10 @@ var builder = WebApplication.CreateBuilder(args);
 var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
 builder.WebHost.UseUrls($"http://*:{port}");
 
-builder.Services.AddHttpClient();
+// Configured HttpClient with an increased timeout for deep AI analysis
+builder.Services.AddHttpClient(System.Net.Http.Options.DefaultName, client => {
+    client.Timeout = TimeSpan.FromMinutes(5);
+});
 builder.Services.AddLogging();
 builder.Services.AddCors(options => options.AddPolicy("AllowAll", p => p.AllowAnyOrigin().WithMethods("GET", "POST", "PUT", "DELETE", "OPTIONS").AllowAnyHeader()));
 
@@ -60,6 +63,19 @@ string GetCetTimestamp() {
     } catch {
         return DateTime.UtcNow.AddHours(1).ToString("dd/MM/yyyy HH:mm:ss");
     }
+}
+
+// Helper to summarize activities for AI context
+string SummarizeActivitiesForAI(List<JsonElement> activities) {
+    return string.Join("\n", activities.Select(a => {
+        var type = a.TryGetProperty("type", out var t) ? t.GetString() : "Unknown";
+        var date = a.TryGetProperty("start_date", out var d) ? d.GetString() : "Unknown";
+        var dist = a.TryGetProperty("distance", out var distP) ? distP.GetDouble() / 1000 : 0;
+        var speed = a.TryGetProperty("average_speed", out var s) ? s.GetDouble() : 0;
+        var pace = speed > 0 ? (16.6667 / speed) : 0;
+        var hr = a.TryGetProperty("average_heartrate", out var h) ? h.GetDouble().ToString() : "N/A";
+        return $"- {date}: {type}, {dist:F2}km, Pace: {pace:F2}m/k, HR: {hr}";
+    }));
 }
 
 // Security Middleware
@@ -114,7 +130,7 @@ app.MapPost("/sync", (int? hours, IHttpClientFactory clientFactory) => {
             var activities = await client.GetFromJsonAsync<List<JsonElement>>(url);
             foreach (var act in (activities ?? new())) {
                 if (act.TryGetProperty("id", out var idProp) && act.TryGetProperty("type", out var typeProp) && typeProp.GetString() == "Run") {
-                    await ProcessActivityAsync(idProp.GetInt64(), clientFactory, GetEnv, AddLog, GetCetTimestamp);
+                    await ProcessActivityAsync(idProp.GetInt64(), clientFactory, GetEnv, AddLog, GetCetTimestamp, SummarizeActivitiesForAI);
                 }
             }
             AddLog($"SYNC_FINISH: Scanning queue processed.");
@@ -131,7 +147,7 @@ app.MapPost("/sync/season", (IHttpClientFactory clientFactory) => {
 
 app.MapPost("/sync/{id}", (long id, IHttpClientFactory clientFactory) => {
     AddLog($"AUTH_ACTION: Individual scan for {id}.");
-    _ = Task.Run(() => ProcessActivityAsync(id, clientFactory, GetEnv, AddLog, GetCetTimestamp));
+    _ = Task.Run(() => ProcessActivityAsync(id, clientFactory, GetEnv, AddLog, GetCetTimestamp, SummarizeActivitiesForAI));
     return Results.Accepted();
 });
 
@@ -144,7 +160,7 @@ app.MapGet("/webhook", ([FromQuery(Name = "hub.mode")] string mode, [FromQuery(N
 app.MapPost("/webhook", ([FromBody] StravaWebhookEvent @event, IHttpClientFactory clientFactory) => 
 {
     if (@event.ObjectType == "activity" && (@event.AspectType == "create" || @event.AspectType == "update")) {
-        _ = Task.Run(() => ProcessActivityAsync(@event.ObjectId, clientFactory, GetEnv, AddLog, GetCetTimestamp));
+        _ = Task.Run(() => ProcessActivityAsync(@event.ObjectId, clientFactory, GetEnv, AddLog, GetCetTimestamp, SummarizeActivitiesForAI));
     }
     return Results.Ok();
 });
@@ -167,7 +183,7 @@ async Task<string?> GetStravaAccessToken(HttpClient client, Func<string, string>
     } catch { return null; }
 }
 
-async Task ProcessActivityAsync(long activityId, IHttpClientFactory clientFactory, Func<string, string> envGetter, Action<string, string> logger, Func<string> timeGetter) {
+async Task ProcessActivityAsync(long activityId, IHttpClientFactory clientFactory, Func<string, string> envGetter, Action<string, string> logger, Func<string> timeGetter, Func<List<JsonElement>, string> summarizer) {
     var tid = Guid.NewGuid().ToString().Substring(0, 5);
     try {
         using var client = clientFactory.CreateClient();
@@ -180,16 +196,21 @@ async Task ProcessActivityAsync(long activityId, IHttpClientFactory clientFactor
         bool NeedsAnalysis(string? s) => string.IsNullOrEmpty(s) || !(s.Contains("stravai report") || s.Contains("[stravai-processed]"));
         if (!NeedsAnalysis(desc)) return;
 
-        logger($"[{tid}] START: Analyzing {activityId} (using Flash)...", "INFO");
-        var hist = await (await client.GetAsync("https://www.strava.com/api/v3/athlete/activities?per_page=12")).Content.ReadAsStringAsync();
+        logger($"[{tid}] START: Analyzing {activityId} (using Flash-Preview)...", "INFO");
+        
+        // Optimize: Summarize history instead of sending raw JSON to avoid timeouts and reduce token usage
+        var histRaw = await client.GetFromJsonAsync<List<JsonElement>>("https://www.strava.com/api/v3/athlete/activities?per_page=12");
+        var histSummary = summarizer(histRaw ?? new());
+        
         client.DefaultRequestHeaders.Authorization = null;
 
         var prompt = $"ROLE: Master Performance Running Coach. GOAL: {envGetter("GOAL_RACE_TYPE")} on {envGetter("GOAL_RACE_DATE")}.\n" +
-                     $"TASK: Analyze activity: {act.GetRawText()}.\n" +
-                     $"HISTORY: {hist}.\n" +
-                     "INSTRUCTION: Return Markdown with Summary, Race Readiness %, T-Minus, Next Week Focus, and Next Training Step.";
+                     $"TASK: Analyze this workout: {act.GetRawText()}.\n" +
+                     $"HISTORY SUMMARY:\n{histSummary}\n\n" +
+                     "INSTRUCTION: Return Markdown with Summary, Race Readiness %, T-Minus, Next Week Focus, and Next Training Step. Be analytical and encouraging.";
 
         var apiKey = envGetter("API_KEY");
+        // Use gemini-3-flash-preview as requested for speed and availability
         var geminiRes = await client.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={apiKey}", new { 
             contents = new[] { new { parts = new[] { new { text = prompt } } } } 
         });
@@ -206,7 +227,7 @@ async Task ProcessActivityAsync(long activityId, IHttpClientFactory clientFactor
             var parts = content.GetProperty("parts");
             var aiText = parts[0].GetProperty("text").GetString();
             
-            var finalDesc = (desc?.Split("###")[0].Trim() ?? "") + $"\n\n################################\nStravAI Report\n---\n{aiText}\n\nAnalysis: {timeGetter()} CET\n*[StravAI-Processed]*\n################################";
+            var finalDesc = (desc?.Split("################################")[0].Trim() ?? "") + $"\n\n################################\nStravAI Report\n---\n{aiText}\n\nAnalysis: {timeGetter()} CET\n*[StravAI-Processed]*\n################################";
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
             await client.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{activityId}", new { description = finalDesc });
             logger($"[{tid}] SUCCESS: Activity {activityId} updated.", "SUCCESS");
