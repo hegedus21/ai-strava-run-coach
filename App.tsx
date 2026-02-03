@@ -37,6 +37,8 @@ const App: React.FC = () => {
     setLocalLogs(prev => [{ id, msg, type, time }, ...prev].slice(0, 50));
   }, []);
 
+  const clearLocalLogs = () => setLocalLogs([]);
+
   const securedFetch = useCallback(async (url: string, options: RequestInit = {}) => {
     const headers = new Headers(options.headers || {});
     headers.set('X-StravAI-Secret', backendSecret);
@@ -228,29 +230,48 @@ const App: React.FC = () => {
 
         {/* Viewport */}
         <main className="flex-grow flex flex-col bg-slate-950 overflow-hidden">
-          <div className="flex bg-slate-900 border-b border-slate-800 z-10">
-            <button onClick={() => setActiveTab('LOGS')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-2 transition-all ${activeTab === 'LOGS' ? 'border-cyan-400 text-cyan-400 bg-slate-800/30' : 'border-transparent text-slate-500 hover:text-slate-400'}`}>Local_Console</button>
-            <button onClick={() => setActiveTab('DIAGNOSTICS')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-2 transition-all ${activeTab === 'DIAGNOSTICS' ? 'border-cyan-400 text-cyan-400 bg-slate-800/30' : 'border-transparent text-slate-500 hover:text-slate-400'}`}>Cloud_Engine</button>
+          <div className="flex bg-slate-900 border-b border-slate-800 z-10 justify-between items-center pr-4">
+            <div className="flex">
+                <button onClick={() => setActiveTab('LOGS')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-2 transition-all ${activeTab === 'LOGS' ? 'border-cyan-400 text-cyan-400 bg-slate-800/30' : 'border-transparent text-slate-500 hover:text-slate-400'}`}>Local_Console</button>
+                <button onClick={() => setActiveTab('DIAGNOSTICS')} className={`px-6 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-2 transition-all ${activeTab === 'DIAGNOSTICS' ? 'border-cyan-400 text-cyan-400 bg-slate-800/30' : 'border-transparent text-slate-500 hover:text-slate-400'}`}>Cloud_Engine</button>
+            </div>
+            {activeTab === 'LOGS' && (
+                <button onClick={clearLocalLogs} className="text-[9px] text-slate-600 hover:text-slate-400 font-bold uppercase tracking-widest border border-slate-800 px-2 py-1 rounded">Clear_Session</button>
+            )}
           </div>
 
           <div className="flex-grow overflow-hidden">
             {activeTab === 'LOGS' ? (
               <div className="h-full p-6 overflow-y-auto font-mono text-[11px] space-y-1">
-                {localLogs.map(log => (
+                {localLogs.length > 0 ? localLogs.map(log => (
                   <div key={log.id} className="flex gap-4">
-                    <span className="text-slate-700">[{log.time}]</span>
+                    <span className="text-slate-700 whitespace-nowrap">[{log.time}]</span>
                     <span className={log.type === 'success' ? 'text-green-400' : log.type === 'error' ? 'text-red-400' : 'text-slate-400'}>{log.msg}</span>
                   </div>
-                ))}
+                )) : (
+                    <div className="h-full flex items-center justify-center text-slate-800 uppercase tracking-widest italic">Local Session Ready</div>
+                )}
               </div>
             ) : (
               <div className="h-full p-6 flex flex-col gap-6 overflow-y-auto">
-                <div ref={remoteLogsRef} className="flex-grow bg-slate-950 border border-slate-800 rounded-xl p-5 overflow-y-auto shadow-inner">
+                <div ref={remoteLogsRef} className="flex-grow bg-slate-950 border border-slate-800 rounded-xl p-5 overflow-y-auto shadow-inner space-y-1">
                   {backendStatus === 'UNAUTHORIZED' ? (
                       <div className="h-full flex items-center justify-center text-amber-500 uppercase font-black tracking-widest">Access_Denied_Check_Secret</div>
-                  ) : backendLogs.length > 0 ? backendLogs.map((l, i) => (
-                      <div key={i} className={`py-1 border-l-2 pl-4 mb-1 ${l.includes("ERROR") ? 'border-red-500 text-red-400' : l.includes("SUCCESS") ? 'border-cyan-400 text-cyan-400 font-bold' : 'border-slate-800 text-slate-500'}`}>{l}</div>
-                  )) : (
+                  ) : backendLogs.length > 0 ? backendLogs.map((l, i) => {
+                      const isError = l.includes("ERROR") || l.includes("FAILED");
+                      const isSuccess = l.includes("SUCCESS");
+                      const isStep = l.includes("[STEP");
+                      return (
+                        <div key={i} className={`py-1 border-l-2 pl-4 transition-colors ${
+                            isError ? 'border-red-500 text-red-400 bg-red-500/5' : 
+                            isSuccess ? 'border-cyan-400 text-cyan-400 font-bold bg-cyan-400/5' : 
+                            isStep ? 'border-amber-500 text-amber-500 bg-amber-500/5' : 
+                            'border-slate-800 text-slate-500'
+                        }`}>
+                            {l}
+                        </div>
+                      );
+                  }) : (
                     <div className="h-full flex items-center justify-center text-slate-800 uppercase tracking-widest italic">Stream Idle</div>
                   )}
                 </div>
