@@ -166,7 +166,7 @@ const App: React.FC = () => {
           <section>
             <h2 className="text-[9px] font-black text-slate-500 uppercase tracking-[0.2em] mb-4">Season_Strategy_Engine</h2>
             <div className="p-4 bg-slate-950 border border-slate-800 rounded-xl space-y-3">
-               <p className="text-[10px] text-slate-500 leading-relaxed uppercase">Deep 500-activity analysis + Race logistics. Results stored on Jan 1st Private Activity.</p>
+               <p className="text-[10px] text-slate-500 leading-relaxed uppercase">Full 1000-activity history analysis + Race logistics. Results stored on Jan 1st Private Activity.</p>
                <button 
                   onClick={() => handleSync('SEASON')} 
                   disabled={!!isProcessing || backendStatus !== 'ONLINE'}
