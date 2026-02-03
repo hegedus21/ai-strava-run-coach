@@ -67,7 +67,7 @@ const App: React.FC = () => {
     }
   }, [backendUrl, securedFetch]);
 
-  const handleSync = async (type: 'BATCH' | 'TARGET' | 'PULSE', id?: string) => {
+  const handleSync = async (type: 'BATCH' | 'TARGET' | 'PULSE' | 'SEASON', id?: string) => {
     if (backendStatus !== 'ONLINE' || isProcessing) return;
     setIsProcessing(type);
     const cleanUrl = backendUrl.trim().replace(/\/$/, '');
@@ -75,13 +75,14 @@ const App: React.FC = () => {
     let endpoint = `${cleanUrl}/sync`;
     if (type === 'TARGET' && id) endpoint = `${cleanUrl}/sync/${id}`;
     if (type === 'PULSE') endpoint = `${cleanUrl}/sync?hours=24`;
+    if (type === 'SEASON') endpoint = `${cleanUrl}/sync/season`;
     
     addLocalLog(`Triggering ${type} Sync...`, "info");
     
     try {
       const res = await securedFetch(endpoint, { method: 'POST' });
       if (res.ok) {
-        addLocalLog(`${type} sync command accepted.`, "success");
+        addLocalLog(`${type} command accepted.`, "success");
         setActiveTab('DIAGNOSTICS');
         if (id) setTargetActivityId('');
       } else {
@@ -90,7 +91,7 @@ const App: React.FC = () => {
     } catch (e: any) {
       addLocalLog("Network Error: " + e.message, "error");
     } finally {
-      setTimeout(() => setIsProcessing(null), 1000);
+      setTimeout(() => setIsProcessing(null), 2000);
     }
   };
 
@@ -158,7 +159,22 @@ const App: React.FC = () => {
       {/* Main Content */}
       <div className="flex-grow flex flex-col md:flex-row min-h-0">
         {/* Sidebar */}
-        <aside className="w-full md:w-72 border-r border-slate-800 bg-slate-900/40 p-6 space-y-8 overflow-y-auto shrink-0">
+        <aside className="w-full md:w-80 border-r border-slate-800 bg-slate-900/40 p-6 space-y-8 overflow-y-auto shrink-0">
+          
+          <section>
+            <h2 className="text-[9px] font-black text-slate-500 uppercase tracking-[0.2em] mb-4">Season_Strategy_Engine</h2>
+            <div className="p-4 bg-slate-950 border border-slate-800 rounded-xl space-y-3">
+               <p className="text-[10px] text-slate-500 leading-relaxed uppercase">Deep 500-activity analysis + Race logistics. Results stored on Jan 1st Private Activity.</p>
+               <button 
+                  onClick={() => handleSync('SEASON')} 
+                  disabled={!!isProcessing || backendStatus !== 'ONLINE'}
+                  className="w-full py-2.5 bg-cyan-900/30 hover:bg-cyan-900/50 text-cyan-400 rounded border border-cyan-500/30 font-bold uppercase text-[10px] tracking-widest transition-all"
+                >
+                  {isProcessing === 'SEASON' ? 'Analyzing...' : 'Recalculate_Strategy'}
+                </button>
+            </div>
+          </section>
+
           <section>
             <h2 className="text-[9px] font-black text-slate-500 uppercase tracking-[0.2em] mb-4">Manual_Sync_Triggers</h2>
             <div className="space-y-4">
