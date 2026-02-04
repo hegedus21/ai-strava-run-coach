@@ -100,11 +100,11 @@ app.Use(async (context, next) => {
 
 // --- Routes ---
 
-app.MapGet("/", () => "StravAI Engine v1.0.1-pro-gold is Online.");
+app.MapGet("/", () => "StravAI Engine v1.1.0-ultra-coach is Online.");
 
 app.MapGet("/health", () => Results.Ok(new { 
     status = "healthy", 
-    engine = "StravAI_Core_v1.0.1_Pro_Gold",
+    engine = "StravAI_Core_v1.1.0_Ultra_Coach",
     config = new {
         gemini_ready = !string.IsNullOrEmpty(GetEnv("API_KEY")),
         strava_ready = !string.IsNullOrEmpty(GetEnv("STRAVA_REFRESH_TOKEN"))
@@ -362,7 +362,7 @@ INSTRUCTION: Provide the response in a professional coaching tone. Use Markdown.
 
                     if (!storageId.HasValue) {
                         var createRes = await client.PostAsJsonAsync("https://www.strava.com/api/v3/activities", new {
-                            name = $"[StravAI] SEASON_PLAN_PRO_GOLD ({DateTime.UtcNow.Year})",
+                            name = $"[StravAI] SEASON_PLAN_ULTRA_COACH ({DateTime.UtcNow.Year})",
                             type = "Workout",
                             start_date_local = startOfYear.ToString("yyyy-MM-ddTHH:mm:ssZ"),
                             elapsed_time = 1,
