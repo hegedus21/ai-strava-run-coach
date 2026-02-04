@@ -292,10 +292,10 @@ public static class SeasonStrategyEngine {
                 return $"{date}: {type}, {dist:F2}km, Pace: {pace:F2}m/k";
             }));
 
-            LocalLog($"[STEP 3/5] Engaging AI Reasoner ({ (customRace != null ? "Multi-Planner Mode" : "Standard Mode") })...");
+            LocalLog($"[STEP 3/5] Engaging AI Reasoner (Flash-Preview)...");
             
             bool useSearch = !string.IsNullOrEmpty(customRace?.InfoUrl);
-            var modelName = useSearch ? "gemini-3-pro-image-preview" : "gemini-3-flash-preview";
+            var modelName = "gemini-3-flash-preview"; // Optimized to use Flash to avoid quota issues
             
             var prompt = $@"ROLE: Elite Ultra-Running Performance Strategist.
 ATHLETE TARGET: {raceName} ({raceDist}) on {raceDate} (Target Time: {raceTime}).
@@ -318,7 +318,7 @@ REQUIREMENTS:
 5. LOGISTICS & GEAR STRATEGY: Grounding advice based on terrain found at the URL (if provided).
 6. REMAINING SEASON FOCUS & NEXT 7 DAYS ACTION PLAN.
 
-INSTRUCTION: Output strictly Markdown.";
+INSTRUCTION: Output strictly Markdown. Ensure you extract and list any source URLs found during research.";
 
             client.DefaultRequestHeaders.Authorization = null;
             var apiKey = envGetter("API_KEY");
