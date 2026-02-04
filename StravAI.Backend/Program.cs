@@ -95,7 +95,7 @@ app.MapPost("/sync", (IHttpClientFactory clientFactory) => {
         var token = await SeasonStrategyEngine.GetStravaAccessToken(client, GetEnv);
         if (token == null) return;
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        var history = await client.GetFromJsonAsync<List<JsonElement>>("https://www.strava.com/api/v3/athlete/activities?per_page=10");
+        var history = await client.GetFromJsonAsync<List<JsonElement>>("https://www.strava.com/api/v3/athlete/activities?per_page=15");
         foreach (var act in history ?? new()) {
             if (act.TryGetProperty("id", out var id)) {
                 await ProcessActivityAsync(id.GetInt64(), clientFactory, GetEnv, AddLog, GetCetTimestamp);
@@ -141,8 +141,19 @@ async Task ProcessActivityAsync(long id, IHttpClientFactory clientFactory, Func<
         var token = await SeasonStrategyEngine.GetStravaAccessToken(client, envGetter);
         if (token == null) return;
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        
+        // Detailed activity fetch to check description
         var act = await client.GetFromJsonAsync<JsonElement>($"https://www.strava.com/api/v3/activities/{id}");
         
+        string description = act.TryGetProperty("description", out var descProp) ? descProp.GetString() ?? "" : "";
+        string lowerDesc = description.ToLower();
+        
+        // Skip if analysis already exists
+        if (lowerDesc.Contains("stravai report") || lowerDesc.Contains("[stravai-processed]")) {
+             logger($"Activity {id} already has analysis. Skipping.", "INFO");
+             return;
+        }
+
         var history = await client.GetFromJsonAsync<List<JsonElement>>("https://www.strava.com/api/v3/athlete/activities?per_page=10");
         var histSummary = "";
         foreach (var h in history ?? new()) {
@@ -250,14 +261,14 @@ INSTRUCTION: Professional coaching tone. Markdown only. Processed: {timeGetter()
                 client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
                 string targetTitle = $"[StravAI] STRATEGY: {(customRace?.Name ?? "Full Season Plan")}";
                 
-                // Reuse existing activity logic
-                if (customRace == null) {
-                    var recent = await client.GetFromJsonAsync<List<JsonElement>>("https://www.strava.com/api/v3/athlete/activities?per_page=50");
-                    var existing = recent?.FirstOrDefault(a => a.GetProperty("name").GetString() == targetTitle);
-                    if (existing != null && existing.Value.TryGetProperty("id", out var eid)) {
-                        await client.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{eid.GetInt64()}", new { description = aiText });
-                        L("Season Strategy Updated.", "SUCCESS"); return;
-                    }
+                // Search for existing strategy activity to update it
+                var recent = await client.GetFromJsonAsync<List<JsonElement>>("https://www.strava.com/api/v3/athlete/activities?per_page=50");
+                var existing = recent?.FirstOrDefault(a => a.GetProperty("name").GetString() == targetTitle);
+                if (existing != null && existing.Value.TryGetProperty("id", out var eid)) {
+                    L($"Updating existing strategy activity: {eid.GetInt64()}");
+                    await client.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{eid.GetInt64()}", new { description = aiText, @private = true });
+                    L($"{targetTitle} Updated.", "SUCCESS"); 
+                    return;
                 }
 
                 await client.PostAsJsonAsync("https://www.strava.com/api/v3/activities", new {
@@ -268,7 +279,7 @@ INSTRUCTION: Professional coaching tone. Markdown only. Processed: {timeGetter()
                     description = aiText,
                     @private = true
                 });
-                L("Season Strategy Deployed.", "SUCCESS");
+                L($"{targetTitle} Deployed as Private Activity.", "SUCCESS");
             }
         } catch (Exception ex) { L($"Season Analysis Error: {ex.Message}", "ERROR"); }
     }
