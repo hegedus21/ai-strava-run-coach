@@ -49,13 +49,12 @@ string GetCetTimestamp() {
         var tzi = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) 
             ? TimeZoneInfo.FindSystemTimeZoneById("Central European Standard Time") 
             : TimeZoneInfo.FindSystemTimeZoneById("Europe/Berlin");
-        return TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, tzi).ToString("dd/MM/yyyy HH:mm:ss");
-    } catch { return DateTime.UtcNow.AddHours(1).ToString("dd/MM/yyyy HH:mm:ss"); }
+        return TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, tzi).ToString("dd/MM/yyyy HH:mm:ss") + " CET";
+    } catch { return DateTime.UtcNow.AddHours(1).ToString("dd/MM/yyyy HH:mm:ss") + " CET"; }
 }
 
 string CompactSummarize(List<JsonElement> activities) {
     if (activities == null || activities.Count == 0) return "No history found.";
-    
     var grouped = activities
         .Where(a => a.TryGetProperty("type", out var t) && t.GetString() == "Run")
         .GroupBy(a => DateTime.Parse(a.GetProperty("start_date").GetString()!).ToString("yyyy-MM"))
@@ -71,23 +70,47 @@ string CompactSummarize(List<JsonElement> activities) {
         sb.AppendLine($"- {month.Key}: {totalKm:F1}km total, Avg Pace: {avgPace:F2}m/k");
     }
 
-    sb.AppendLine("\nMOST RECENT 10 RUNS (INDIVIDUAL METRICS):");
-    foreach (var a in activities.Take(10)) {
+    sb.AppendLine("\nMOST RECENT 15 RUNS (INDIVIDUAL METRICS):");
+    foreach (var a in activities.Take(15)) {
         var date = a.GetProperty("start_date").GetString();
         var dist = a.GetProperty("distance").GetDouble() / 1000;
         var speed = a.GetProperty("average_speed").GetDouble();
         var pace = speed > 0 ? (16.6667 / speed) : 0;
         sb.AppendLine($"- {date}: {dist:F2}km @ {pace:F2}m/k");
     }
-
     return sb.ToString();
 }
 
 // --- Routes ---
 
-app.MapGet("/", () => "StravAI Engine v1.2.2 is Online.");
-app.MapGet("/health", () => Results.Ok(new { status = "healthy", engine = "StravAI_Core_v1.2.2" }));
+app.MapGet("/", () => "StravAI Engine v1.2.3 is Online.");
+app.MapGet("/health", () => Results.Ok(new { status = "healthy", engine = "StravAI_Core_v1.2.3" }));
 app.MapGet("/logs", () => Results.Ok(logs.ToArray()));
+
+// Batch Sync
+app.MapPost("/sync", (IHttpClientFactory clientFactory) => {
+    AddLog("AUTH_ACTION: Batch Sync triggered.");
+    _ = Task.Run(async () => {
+        using var client = clientFactory.CreateClient();
+        var token = await SeasonStrategyEngine.GetStravaAccessToken(client, GetEnv);
+        if (token == null) return;
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        var history = await client.GetFromJsonAsync<List<JsonElement>>("https://www.strava.com/api/v3/athlete/activities?per_page=10");
+        foreach (var act in history ?? new()) {
+            if (act.TryGetProperty("id", out var id)) {
+                await ProcessActivityAsync(id.GetInt64(), clientFactory, GetEnv, AddLog, GetCetTimestamp);
+            }
+        }
+    });
+    return Results.Accepted();
+});
+
+// Single ID Sync
+app.MapPost("/sync/{id}", (long id, IHttpClientFactory clientFactory) => {
+    AddLog($"AUTH_ACTION: Force Sync for Activity {id}.");
+    _ = Task.Run(() => ProcessActivityAsync(id, clientFactory, GetEnv, AddLog, GetCetTimestamp));
+    return Results.Accepted();
+});
 
 app.MapPost("/sync/custom-race", ([FromBody] CustomRaceRequest req, IHttpClientFactory clientFactory) => {
     AddLog($"AUTH_ACTION: Custom Race Analysis triggered for '{req.Name}'.");
@@ -117,14 +140,25 @@ async Task ProcessActivityAsync(long id, IHttpClientFactory clientFactory, Func<
         using var client = clientFactory.CreateClient();
         var token = await SeasonStrategyEngine.GetStravaAccessToken(client, envGetter);
         if (token == null) return;
-        
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         var act = await client.GetFromJsonAsync<JsonElement>($"https://www.strava.com/api/v3/activities/{id}");
         
-        // CRITICAL: Clear Strava auth before calling Gemini to avoid 401
-        client.DefaultRequestHeaders.Authorization = null;
-        
-        var prompt = $"Analyze this run for an athlete training for a {envGetter("GOAL_RACE_TYPE")}:\n{act.GetRawText()}\n\nOutput strictly Markdown.";
+        var history = await client.GetFromJsonAsync<List<JsonElement>>("https://www.strava.com/api/v3/athlete/activities?per_page=10");
+        var histSummary = "";
+        foreach (var h in history ?? new()) {
+            var date = h.GetProperty("start_date").GetString();
+            var dist = h.GetProperty("distance").GetDouble() / 1000;
+            var speed = h.GetProperty("average_speed").GetDouble();
+            var pace = speed > 0 ? (16.6667 / speed) : 0;
+            histSummary += $"- {date}: {dist:F1}km @ {pace:F2}m/k\n";
+        }
+
+        client.DefaultRequestHeaders.Authorization = null; // Fix 401 for Gemini
+        var prompt = $"ROLE: Master Performance Running Coach. GOAL: {envGetter("GOAL_RACE_TYPE")} on {envGetter("GOAL_RACE_DATE")}.\n" +
+                     $"TASK: Analyze this workout: {act.GetRawText()}.\n" +
+                     $"HISTORY SUMMARY:\n{histSummary}\n\n" +
+                     "INSTRUCTION: Return Markdown with Summary, Race Readiness %, T-Minus, Next Week Focus, and Next Training Step. Be analytical and encouraging.";
+
         var apiKey = envGetter("API_KEY");
         var geminiRes = await client.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={apiKey}", new { contents = new[] { new { parts = new[] { new { text = prompt } } } } });
         
@@ -132,16 +166,11 @@ async Task ProcessActivityAsync(long id, IHttpClientFactory clientFactory, Func<
             var aiRes = await geminiRes.Content.ReadFromJsonAsync<JsonElement>();
             var aiText = aiRes.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString();
             var desc = (act.TryGetProperty("description", out var d) ? d.GetString() : "") + $"\n\n--- StravAI Report ---\n{aiText}\n\nProcessed: {timeGetter()}";
-            
-            // Re-apply Strava auth to update the activity
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
             await client.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{id}", new { description = desc });
             logger($"Activity {id} updated successfully.", "SUCCESS");
-        } else {
-            var err = await geminiRes.Content.ReadAsStringAsync();
-            logger($"AI Analysis Failed: {err}", "ERROR");
         }
-    } catch (Exception ex) { logger($"Analysis Error: {ex.Message}", "ERROR"); }
+    } catch (Exception ex) { logger($"Analysis Error for {id}: {ex.Message}", "ERROR"); }
 }
 
 public record CustomRaceRequest(string Name, string Distance, string Date, string TargetTime, string? RaceDetails);
@@ -170,67 +199,78 @@ public static class SeasonStrategyEngine {
             if (token == null) { L("Auth Failed", "ERROR"); return; }
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-            L("Compiling Career History (Optimized Tokens)...");
-            var activities = await client.GetFromJsonAsync<List<JsonElement>>("https://www.strava.com/api/v3/athlete/activities?per_page=200");
-            var summaryText = summarizer(activities ?? new());
+            var historyData = await client.GetFromJsonAsync<List<JsonElement>>("https://www.strava.com/api/v3/athlete/activities?per_page=200");
+            var historySummary = summarizer(historyData ?? new());
 
-            // CRITICAL: Clear Strava auth before calling Gemini to avoid 401
             client.DefaultRequestHeaders.Authorization = null;
 
-            var prompt = $@"ROLE: Elite Ultra Performance Strategist. 
-ATHLETE GOAL: {(customRace?.Name ?? "Main Season Goal")} ({(customRace?.Distance ?? "Target Distance")}) on {(customRace?.Date ?? "Target Date")}.
-TARGET FINISH TIME: {(customRace?.TargetTime ?? "TBD")}.
+            var prompt = $@"ATHLETE GOAL: {(customRace?.Name ?? envGetter("GOAL_RACE_TYPE"))} on {(customRace?.Date ?? envGetter("GOAL_RACE_DATE"))} (Target Time: {(customRace?.TargetTime ?? envGetter("GOAL_RACE_TIME"))}).
+HISTORY CONTEXT (Up to 1000 Activities - FULL HISTORY):
+{historySummary}
 
 RACE SPECIFICS PROVIDED BY ATHLETE:
 { (customRace?.RaceDetails ?? "No specific terrain or loop details provided.") }
 
-ATHLETE PERFORMANCE HISTORY (MONTHLY AGGREGATE):
-{summaryText}
+TASK: Perform a deep physiological and logistical analysis to generate a SEASON STRATEGY.
 
-TASK:
-1. GOAL REALISM CHECK: Based on history, how feasible is the {customRace?.TargetTime ?? "goal"}? Provide a % probability score.
-2. NUTRITION & REFRESHMENT PLAN: Deeply analyze the provided loop length and refreshment availability. Create a timed intake schedule (e.g., 'Every X loops/minutes, consume Y').
-3. PACING STRATEGY: Provide 3 tiers (Optimistic, Realistic, Survival) based on the course specifics provided.
-4. RECOVERY & PREP: Suggest training adjustments for the remaining time.
+REQUIRED SECTIONS IN OUTPUT (Markdown):
 
-INSTRUCTION: Output strictly Markdown.";
+1. EXECUTIVE SUMMARY:
+   A high-level overview of fitness trends based on the full activity history provided.
+
+2. FEASIBILITY & GOAL CALIBRATION:
+   - Calculate Functional Threshold Pace (FTP) and Aerobic Base from history.
+   - Compare to target pace. Provide FEASIBILITY PROBABILITY (%).
+   - Suggest Silver (Progressive) and Bronze (Safe Finish) goals if main goal is too aggressive.
+
+3. RACE PACE STRATEGY (3 TIERS):
+   - OPTIMISTIC, REALISTIC, PESSIMISTIC.
+
+4. NUTRITION & REFRESHMENT PLAN:
+   Detailed hydration/nutrition strategy based on loop details provided.
+
+5. LOGISTICS & GEAR STRATEGY:
+   What to carry, Aid Station Swaps.
+
+6. REMAINING SEASON FOCUS:
+   Key training themes.
+
+7. NEXT 7 DAYS - ACTION PLAN:
+   Immediate 7-day plan.
+
+INSTRUCTION: Professional coaching tone. Markdown only. Processed: {timeGetter()}";
 
             var apiKey = envGetter("API_KEY");
-            var payload = new {
-                contents = new[] { new { parts = new[] { new { text = prompt } } } }
-            };
-
-            var geminiRes = await client.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={apiKey}", payload);
+            var geminiRes = await client.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={apiKey}", new { contents = new[] { new { parts = new[] { new { text = prompt } } } } });
             
-            if (geminiRes.StatusCode == System.Net.HttpStatusCode.TooManyRequests) {
-                L("QUOTA EXHAUSTED: Free Tier limit reached. Please wait 60s before retry.", "ERROR");
-                return;
+            if (geminiRes.IsSuccessStatusCode) {
+                var aiRes = await geminiRes.Content.ReadFromJsonAsync<JsonElement>();
+                var aiText = aiRes.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString();
+
+                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+                string targetTitle = $"[StravAI] STRATEGY: {(customRace?.Name ?? "Full Season Plan")}";
+                
+                // Reuse existing activity logic
+                if (customRace == null) {
+                    var recent = await client.GetFromJsonAsync<List<JsonElement>>("https://www.strava.com/api/v3/athlete/activities?per_page=50");
+                    var existing = recent?.FirstOrDefault(a => a.GetProperty("name").GetString() == targetTitle);
+                    if (existing != null && existing.Value.TryGetProperty("id", out var eid)) {
+                        await client.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{eid.GetInt64()}", new { description = aiText });
+                        L("Season Strategy Updated.", "SUCCESS"); return;
+                    }
+                }
+
+                await client.PostAsJsonAsync("https://www.strava.com/api/v3/activities", new {
+                    name = targetTitle,
+                    type = "Workout",
+                    start_date_local = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                    elapsed_time = 1,
+                    description = aiText,
+                    @private = true
+                });
+                L("Season Strategy Deployed.", "SUCCESS");
             }
-
-            if (!geminiRes.IsSuccessStatusCode) {
-                var err = await geminiRes.Content.ReadAsStringAsync();
-                L($"AI API ERROR: {err}", "ERROR");
-                return;
-            }
-
-            var aiRes = await geminiRes.Content.ReadFromJsonAsync<JsonElement>();
-            var aiText = aiRes.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString();
-
-            L("Generating Strava Strategy Document...");
-            
-            // Re-apply Strava auth to save the report
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            await client.PostAsJsonAsync("https://www.strava.com/api/v3/activities", new {
-                name = $"[StravAI] RACE_STRATEGY: {customRace?.Name ?? "Season Plan"}",
-                type = "Workout",
-                start_date_local = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
-                elapsed_time = 1,
-                description = aiText,
-                @private = true
-            });
-            L("SUCCESS: Analysis deployed to Strava.", "SUCCESS");
-
-        } catch (Exception ex) { L($"CRITICAL: {ex.Message}", "ERROR"); }
+        } catch (Exception ex) { L($"Season Analysis Error: {ex.Message}", "ERROR"); }
     }
 }
 
@@ -243,15 +283,11 @@ public class SeasonBackgroundWorker : BackgroundService {
         while (!ct.IsCancellationRequested) {
             var now = DateTime.UtcNow;
             if (now.DayOfWeek == DayOfWeek.Sunday && now.Hour == 2) {
-                await SeasonStrategyEngine.ProcessSeasonAnalysisAsync(_cf, k => Environment.GetEnvironmentVariable(k) ?? _cfg[k] ?? "", _l, () => DateTime.UtcNow.ToString("G"), (list) => "Automated Sunday Update");
+                await SeasonStrategyEngine.ProcessSeasonAnalysisAsync(_cf, k => Environment.GetEnvironmentVariable(k) ?? _cfg[k] ?? "", _l, () => DateTime.UtcNow.ToString("G"), (list) => "Automated Update");
             }
             await Task.Delay(TimeSpan.FromHours(1), ct);
         }
     }
 }
 
-public record StravaWebhookEvent(
-    [property: JsonPropertyName("object_type")] string ObjectType, 
-    [property: JsonPropertyName("object_id")] long ObjectId, 
-    [property: JsonPropertyName("aspect_type")] string AspectType
-);
+public record StravaWebhookEvent([property: JsonPropertyName("object_id")] long ObjectId, [property: JsonPropertyName("object_type")] string ObjectType);
