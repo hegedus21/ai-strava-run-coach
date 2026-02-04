@@ -1,4 +1,3 @@
-
 import { useState, useEffect, useCallback, useRef } from 'react';
 import React from 'react';
 import { StravAILogo } from './components/Icon';
@@ -107,7 +106,7 @@ const App: React.FC = () => {
           <div>
             <h1 className="text-white font-black tracking-tighter uppercase text-sm flex items-center gap-2">
               StravAI_Command_Center
-              <span className="text-[10px] text-cyan-500 font-bold border border-cyan-500/20 px-1.5 rounded text-glow">v1.2.0_CUSTOM</span>
+              <span className="text-[10px] text-cyan-500 font-bold border border-cyan-500/20 px-1.5 rounded text-glow">v1.2.1_CUSTOM</span>
             </h1>
             <div className="flex items-center gap-1.5 text-[9px] uppercase font-bold tracking-widest mt-0.5">
               <span className={`w-1.5 h-1.5 rounded-full ${backendStatus === 'ONLINE' ? 'bg-cyan-400 animate-pulse' : 'bg-red-500'}`}></span>
@@ -132,10 +131,10 @@ const App: React.FC = () => {
                  <input type="text" placeholder="TARGET TIME" value={crTarget} onChange={e=>setCrTarget(e.target.value)} className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-cyan-400 outline-none focus:border-cyan-500"/>
                  
                  <div className="space-y-1">
-                   <label className="text-[8px] text-slate-600 font-bold uppercase ml-1 tracking-widest">Race_Specifics_&_Nutrition</label>
+                   <label className="text-[8px] text-slate-600 font-bold uppercase ml-1 tracking-widest">Manual_Race_Specifics</label>
                    <textarea 
-                     rows={5}
-                     placeholder="e.g. loops, elevation, available snacks (magnesium, water, iso, etc.)" 
+                     rows={6}
+                     placeholder="loops, elevation, available snacks (magnesium, salt tablets, iso, etc.)" 
                      value={crDetails} 
                      onChange={e=>setCrDetails(e.target.value)} 
                      className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-cyan-400 outline-none focus:border-cyan-500 text-[10px] resize-none"
