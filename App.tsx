@@ -13,6 +13,7 @@ const App: React.FC = () => {
   const [crDate, setCrDate] = useState('');
   const [crTarget, setCrTarget] = useState('');
   const [crDetails, setCrDetails] = useState('');
+  const [syncId, setSyncId] = useState('');
 
   const [backendLogs, setBackendLogs] = useState<string[]>([]);
   const [backendStatus, setBackendStatus] = useState<'UNKNOWN' | 'ONLINE' | 'UNAUTHORIZED' | 'OFFLINE'>('UNKNOWN');
@@ -50,21 +51,25 @@ const App: React.FC = () => {
     } catch { setBackendStatus('OFFLINE'); }
   }, [backendUrl, securedFetch]);
 
-  const handleSync = async (type: 'SEASON' | 'CUSTOM') => {
+  const handleSync = async (type: 'SEASON' | 'CUSTOM' | 'BATCH' | 'ID') => {
     if (backendStatus !== 'ONLINE' || isProcessing) return;
     setIsProcessing(type);
     const cleanUrl = backendUrl.trim().replace(/\/$/, '');
     
-    let endpoint = type === 'CUSTOM' ? `${cleanUrl}/sync/custom-race` : `${cleanUrl}/sync/season`;
-    let body = type === 'CUSTOM' ? JSON.stringify({ 
-      Name: crName, 
-      Distance: crDist, 
-      Date: crDate, 
-      TargetTime: crTarget, 
-      RaceDetails: crDetails 
-    }) : undefined;
+    let endpoint = '';
+    let body = undefined;
+
+    switch(type) {
+      case 'CUSTOM': 
+        endpoint = `${cleanUrl}/sync/custom-race`;
+        body = JSON.stringify({ Name: crName, Distance: crDist, Date: crDate, TargetTime: crTarget, RaceDetails: crDetails });
+        break;
+      case 'SEASON': endpoint = `${cleanUrl}/sync/season`; break;
+      case 'BATCH': endpoint = `${cleanUrl}/sync`; break;
+      case 'ID': endpoint = `${cleanUrl}/sync/${syncId}`; break;
+    }
     
-    addLocalLog(`Deploying ${type} Request...`, "info");
+    addLocalLog(`Deploying ${type} Protocol...`, "info");
     try {
       const res = await securedFetch(endpoint, { 
         method: 'POST', 
@@ -72,16 +77,11 @@ const App: React.FC = () => {
         headers: body ? { 'Content-Type': 'application/json' } : {} 
       });
       if (res.ok) {
-        addLocalLog(`${type} Protocol Accepted.`, "success");
+        addLocalLog(`${type} Request Accepted.`, "success");
         setActiveTab('DIAGNOSTICS');
-        if (type === 'CUSTOM') setCrDetails('');
-      } else if (res.status === 429) {
-        addLocalLog("Engine Quota Warning. Retry in 60s.", "error");
-      } else {
-        addLocalLog("Engine Error Response.", "error");
-      }
-    } catch (e: any) { addLocalLog("Transmission Failure.", "error"); }
-    finally { setTimeout(() => setIsProcessing(null), 2000); }
+      } else { addLocalLog(`Server Error: ${res.status}`, "error"); }
+    } catch (e: any) { addLocalLog("Network Transmission Failure.", "error"); }
+    finally { setTimeout(() => setIsProcessing(null), 1000); }
   };
 
   useEffect(() => {
@@ -92,96 +92,74 @@ const App: React.FC = () => {
     }
   }, [backendUrl, checkBackend]);
 
-  useEffect(() => {
-    if (remoteLogsRef.current) {
-        remoteLogsRef.current.scrollTo({ top: remoteLogsRef.current.scrollHeight, behavior: 'smooth' });
-    }
-  }, [backendLogs, localLogs, activeTab]);
-
   return (
-    <div className="flex flex-col h-screen bg-slate-950 text-slate-300 font-mono text-[11px] selection:bg-cyan-500 selection:text-white">
-      <header className="flex items-center justify-between px-6 py-4 bg-slate-900 border-b border-slate-800 shrink-0 shadow-2xl z-20">
+    <div className="flex flex-col h-screen bg-slate-950 text-slate-300 font-mono text-[11px]">
+      <header className="flex items-center justify-between px-6 py-4 bg-slate-900 border-b border-slate-800 shrink-0">
         <div className="flex items-center gap-4">
           <StravAILogo className="w-9 h-9" />
           <div>
-            <h1 className="text-white font-black tracking-tighter uppercase text-sm flex items-center gap-2">
-              StravAI_Command_Center
-              <span className="text-[10px] text-cyan-500 font-bold border border-cyan-500/20 px-1.5 rounded text-glow">v1.2.1_CUSTOM</span>
+            <h1 className="text-white font-black uppercase text-sm flex items-center gap-2">
+              StravAI_Command
+              <span className="text-[10px] text-cyan-500 font-bold border border-cyan-500/20 px-1.5 rounded">v1.2.3_ULTRA</span>
             </h1>
-            <div className="flex items-center gap-1.5 text-[9px] uppercase font-bold tracking-widest mt-0.5">
-              <span className={`w-1.5 h-1.5 rounded-full ${backendStatus === 'ONLINE' ? 'bg-cyan-400 animate-pulse' : 'bg-red-500'}`}></span>
-              <span className={backendStatus === 'ONLINE' ? 'text-cyan-400' : 'text-red-500'}>{backendStatus}</span>
+            <div className={`text-[9px] uppercase font-bold tracking-widest mt-0.5 ${backendStatus === 'ONLINE' ? 'text-cyan-400' : 'text-red-500'}`}>
+              {backendStatus}
             </div>
           </div>
         </div>
-        <button onClick={() => setShowSetup(true)} className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded transition-all font-bold uppercase text-[10px]">Config</button>
+        <button onClick={() => setShowSetup(true)} className="px-3 py-1.5 bg-slate-800 border border-slate-700 rounded uppercase font-bold text-[10px]">Config</button>
       </header>
 
       <div className="flex-grow flex flex-col md:flex-row min-h-0">
-        <aside className="w-full md:w-80 border-r border-slate-800 bg-slate-900/40 p-6 space-y-8 overflow-y-auto shrink-0 scrollbar-hide">
-          <section>
-            <h2 className="text-[9px] font-black text-slate-500 uppercase tracking-[0.2em] mb-4">Race_Deployment</h2>
-            <div className="p-5 bg-slate-950 border border-slate-800 rounded-2xl space-y-4 shadow-xl">
-               <div className="space-y-3">
-                 <input type="text" placeholder="RACE NAME" value={crName} onChange={e=>setCrName(e.target.value)} className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-cyan-400 outline-none focus:border-cyan-500"/>
-                 <div className="flex gap-2">
-                   <input type="text" placeholder="50K / 100M" value={crDist} onChange={e=>setCrDist(e.target.value)} className="w-1/2 bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-cyan-400 outline-none focus:border-cyan-500"/>
-                   <input type="text" placeholder="YYYY-MM-DD" value={crDate} onChange={e=>setCrDate(e.target.value)} className="w-1/2 bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-cyan-400 outline-none focus:border-cyan-500"/>
-                 </div>
-                 <input type="text" placeholder="TARGET TIME" value={crTarget} onChange={e=>setCrTarget(e.target.value)} className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-cyan-400 outline-none focus:border-cyan-500"/>
-                 
-                 <div className="space-y-1">
-                   <label className="text-[8px] text-slate-600 font-bold uppercase ml-1 tracking-widest">Manual_Race_Specifics</label>
-                   <textarea 
-                     rows={6}
-                     placeholder="loops, elevation, available snacks (magnesium, salt tablets, iso, etc.)" 
-                     value={crDetails} 
-                     onChange={e=>setCrDetails(e.target.value)} 
-                     className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-cyan-400 outline-none focus:border-cyan-500 text-[10px] resize-none"
-                   />
-                 </div>
+        <aside className="w-full md:w-80 border-r border-slate-800 bg-slate-900/40 p-6 space-y-8 overflow-y-auto">
+          <section className="space-y-4">
+            <h2 className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Race_Deployment</h2>
+            <div className="p-4 bg-slate-950 border border-slate-800 rounded-xl space-y-3 shadow-xl">
+               <input type="text" placeholder="RACE NAME" value={crName} onChange={e=>setCrName(e.target.value)} className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-cyan-400 outline-none text-xs"/>
+               <div className="flex gap-2">
+                 <input type="text" placeholder="DATE" value={crDate} onChange={e=>setCrDate(e.target.value)} className="w-1/2 bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-cyan-400 outline-none text-xs"/>
+                 <input type="text" placeholder="GOAL" value={crTarget} onChange={e=>setCrTarget(e.target.value)} className="w-1/2 bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-cyan-400 outline-none text-xs"/>
                </div>
-               <button 
-                  onClick={() => handleSync('CUSTOM')} 
-                  disabled={!crName || !crDate || !crDetails || !!isProcessing || backendStatus !== 'ONLINE'}
-                  className="w-full py-3 bg-cyan-900/20 hover:bg-cyan-900/40 text-cyan-400 rounded-xl border border-cyan-500/20 font-black uppercase text-[10px] tracking-[0.2em] transition-all disabled:opacity-20"
-                >
-                  {isProcessing === 'CUSTOM' ? 'Analyzing...' : 'Deploy_Analysis'}
-                </button>
+               <textarea rows={5} placeholder="Loops, nutrition details..." value={crDetails} onChange={e=>setCrDetails(e.target.value)} className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-cyan-400 outline-none text-[10px] resize-none"/>
+               <button onClick={() => handleSync('CUSTOM')} disabled={!crName || !crDate || !!isProcessing} className="w-full py-3 bg-cyan-900/20 text-cyan-400 rounded-lg border border-cyan-500/20 font-black uppercase text-[10px] tracking-widest disabled:opacity-20 transition-all">
+                {isProcessing === 'CUSTOM' ? 'Analyzing...' : 'Deploy_Analysis'}
+               </button>
             </div>
           </section>
 
-          <section>
-            <h2 className="text-[9px] font-black text-slate-500 uppercase tracking-[0.2em] mb-4">Core_Systems</h2>
-            <button onClick={() => handleSync('SEASON')} className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-slate-400 rounded-xl border border-slate-800 text-[9px] uppercase font-black tracking-widest transition-all">Full_Season_Sync</button>
+          <section className="space-y-4">
+            <h2 className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Operations</h2>
+            <div className="space-y-2">
+               <button onClick={() => handleSync('SEASON')} className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-slate-400 rounded-lg border border-slate-800 text-[9px] uppercase font-black transition-all">Season_Update</button>
+               <button onClick={() => handleSync('BATCH')} className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-slate-400 rounded-lg border border-slate-800 text-[9px] uppercase font-black transition-all">Batch_Sync_Recent</button>
+            </div>
+          </section>
+
+          <section className="space-y-4">
+            <h2 className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Manual_Override</h2>
+            <div className="flex gap-2">
+              <input type="text" placeholder="ACTIVITY_ID" value={syncId} onChange={e=>setSyncId(e.target.value)} className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-cyan-400 outline-none text-xs"/>
+              <button onClick={() => handleSync('ID')} disabled={!syncId} className="px-4 bg-slate-800 rounded-lg border border-slate-700 text-cyan-500 font-bold uppercase">Run</button>
+            </div>
           </section>
         </aside>
 
-        <main className="flex-grow flex flex-col bg-slate-950 overflow-hidden relative">
-          <div className="flex bg-slate-900 border-b border-slate-800 z-10 sticky top-0">
-            <button onClick={() => setActiveTab('LOGS')} className={`px-8 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-2 transition-all ${activeTab === 'LOGS' ? 'border-cyan-400 text-cyan-400 bg-slate-800/30' : 'border-transparent text-slate-500 hover:text-slate-400'}`}>Terminal</button>
-            <button onClick={() => setActiveTab('DIAGNOSTICS')} className={`px-8 py-4 text-[10px] font-black uppercase tracking-[0.2em] border-b-2 transition-all ${activeTab === 'DIAGNOSTICS' ? 'border-cyan-400 text-cyan-400 bg-slate-800/30' : 'border-transparent text-slate-500 hover:text-slate-400'}`}>Cloud_Metrics</button>
+        <main className="flex-grow flex flex-col bg-slate-950 overflow-hidden">
+          <div className="flex bg-slate-900 border-b border-slate-800">
+            <button onClick={() => setActiveTab('LOGS')} className={`px-8 py-4 text-[10px] font-black uppercase border-b-2 transition-all ${activeTab === 'LOGS' ? 'border-cyan-400 text-cyan-400' : 'border-transparent text-slate-500'}`}>Terminal</button>
+            <button onClick={() => setActiveTab('DIAGNOSTICS')} className={`px-8 py-4 text-[10px] font-black uppercase border-b-2 transition-all ${activeTab === 'DIAGNOSTICS' ? 'border-cyan-400 text-cyan-400' : 'border-transparent text-slate-500'}`}>Cloud_Metrics</button>
           </div>
-
           <div className="flex-grow overflow-hidden p-6 md:p-10">
-            <div ref={remoteLogsRef} className="h-full bg-slate-900/40 border border-slate-800/50 rounded-3xl p-6 md:p-8 overflow-y-auto space-y-1 shadow-2xl backdrop-blur-sm">
+            <div ref={remoteLogsRef} className="h-full bg-slate-900/40 border border-slate-800/50 rounded-2xl p-6 overflow-y-auto space-y-1 font-mono text-[10px]">
                 {activeTab === 'LOGS' ? (
                   localLogs.map(log => (
-                    <div key={log.id} className="flex gap-6 py-0.5 border-b border-white/5 last:border-0">
-                      <span className="text-slate-700 whitespace-nowrap font-bold">[{log.time}]</span>
+                    <div key={log.id} className="flex gap-4">
+                      <span className="text-slate-700">[{log.time}]</span>
                       <span className={log.type === 'success' ? 'text-cyan-400' : log.type === 'error' ? 'text-red-400' : 'text-slate-500'}>{log.msg}</span>
                     </div>
                   ))
                 ) : (
-                  backendLogs.map((l, i) => (
-                    <div key={i} className={`py-1.5 border-l-4 pl-6 mb-1 transition-all ${
-                        l.includes("ERROR") ? 'border-red-500 text-red-400 bg-red-500/5' : 
-                        l.includes("SUCCESS") ? 'border-cyan-400 text-cyan-400 font-bold bg-cyan-400/5' : 
-                        'border-slate-800 text-slate-600'
-                    }`}>
-                        {l}
-                    </div>
-                  ))
+                  backendLogs.map((l, i) => <div key={i} className={`py-1 border-l-2 pl-4 mb-0.5 ${l.includes("ERROR") ? 'border-red-500 text-red-400' : l.includes("SUCCESS") ? 'border-cyan-400 text-cyan-400' : 'border-slate-800 text-slate-600'}`}>{l}</div>)
                 )}
             </div>
           </div>
@@ -189,14 +167,14 @@ const App: React.FC = () => {
       </div>
 
       {showSetup && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/95 backdrop-blur-xl p-4">
-          <div className="bg-slate-900 border border-slate-700/50 rounded-[2rem] max-w-lg w-full p-10 space-y-8 shadow-2xl">
-            <h2 className="text-2xl font-black text-white uppercase tracking-tighter">System_Link</h2>
-            <div className="space-y-5">
-              <input type="text" value={backendUrl} placeholder="GATEWAY URL" onChange={e => setBackendUrl(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 text-xs text-cyan-400 outline-none focus:border-cyan-500 font-bold"/>
-              <input type="password" value={backendSecret} placeholder="VERIFY TOKEN" onChange={e => setBackendSecret(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 text-xs text-cyan-400 outline-none focus:border-cyan-500 font-bold"/>
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/95 backdrop-blur-md p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-3xl max-w-md w-full p-8 space-y-6">
+            <h2 className="text-xl font-black text-white uppercase">System_Link</h2>
+            <div className="space-y-4">
+              <input type="text" value={backendUrl} placeholder="GATEWAY URL" onChange={e => setBackendUrl(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-4 text-xs text-cyan-400 outline-none font-bold"/>
+              <input type="password" value={backendSecret} placeholder="VERIFY TOKEN" onChange={e => setBackendSecret(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-xl p-4 text-xs text-cyan-400 outline-none font-bold"/>
             </div>
-            <button onClick={() => {localStorage.setItem('stravai_backend_url', backendUrl); localStorage.setItem('stravai_backend_secret', backendSecret); setShowSetup(false); checkBackend();}} className="w-full py-5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-2xl font-black uppercase text-[11px] tracking-widest">Connect</button>
+            <button onClick={() => {localStorage.setItem('stravai_backend_url', backendUrl); localStorage.setItem('stravai_backend_secret', backendSecret); setShowSetup(false); checkBackend();}} className="w-full py-4 bg-cyan-600 text-white rounded-xl font-black uppercase text-[10px] tracking-widest">Connect</button>
           </div>
         </div>
       )}
