@@ -1,4 +1,3 @@
-
 # StravAI Coach 🏃‍♂️🤖
 
 > **Elite performance coaching powered by Gemini 3. From raw GPS data to professional prescriptions.**
@@ -21,6 +20,14 @@ This version represents the **Deep Performance Milestone**.
 
 ---
 
+## 🛠 Version Control & Rollback
+To ensure you can always return to this stable state:
+1.  **Tagging:** Use `git tag -a v1.1.0-ultra-coach -m "Stable Release"` in your repository.
+2.  **Restoring:** Use `git checkout v1.1.0-ultra-coach` to rollback any future breaking changes.
+3.  **History:** Refer to `CHANGELOG.md` for the full technical delta of this version.
+
+---
+
 ## 🌟 Key Features
 
 *   **Pro Reasoning Engine:** Switched to `gemini-3-pro-preview` for deep analysis and `gemini-3-flash-preview` for high-speed automated reports.
@@ -30,7 +37,6 @@ This version represents the **Deep Performance Milestone**.
     *   **Backend:** .NET 9 Minimal API hosted on **Koyeb**.
     *   **Intelligence:** **Gemini 3** (Free Tier) for elite-tier reasoning.
     *   **Automation:** **GitHub Actions** for headless synchronization.
-*   **Interactive Feedback Loop:** Add athlete notes (e.g., *"Legs felt heavy"*) to your activity description, and the AI Coach will incorporate your subjective feel into the next prescription.
 
 ---
 
@@ -40,19 +46,6 @@ This version represents the **Deep Performance Milestone**.
 *   **AI Model:** Google Gemini 3 (Complex Reasoning & Flash Modes).
 *   **Infrastructure:** Koyeb (Service Hosting) & GitHub Actions (Scheduled Sync).
 *   **Console:** React + Tailwind CSS (Command Center for manual triggers).
-
----
-
-## 🚀 Deployment
-
-1.  **Get Keys:** Obtain a [Gemini API Key](https://aistudio.google.com/app/apikey) and [Strava Client ID/Secret](https://www.strava.com/settings/api).
-2.  **Environment:** Set your `GOAL_RACE_TYPE` and `GOAL_RACE_DATE` in your hosting environment.
-3.  **Webhook:** Register your service URL with Strava's webhook API to enable real-time analysis.
-
----
-
-## 💡 Engineering Philosophy
-This project demonstrates the power of **AI-Native Development**. By utilizing AI as a co-pilot, I bypassed the friction of API documentation and boilerplate, focusing entirely on the **data architecture** and **coaching logic**. The result is a production-grade performance engine maintained for $0/month.
 
 ---
 *Disclaimer: This is a personal research project. Usage must comply with Strava and Google API Terms of Service.*
