@@ -1,9 +1,9 @@
 
 {
   "name": "StravAI Coach",
-  "version": "1.1.0-ultra-coach",
-  "release_state": "Ultra Intelligence Stable",
-  "description": "A high-performance autonomous coaching engine with deep 1000-activity history analysis and full-season race strategy logic.",
+  "version": "1.2.0-multi-planner",
+  "release_state": "Advanced Career Intelligence",
+  "description": "High-performance autonomous coaching engine now featuring a Multi-Race Planner with Google Search grounding for race-specific strategy and feasibility analysis.",
   "requestFramePermissions": [
     "geolocation"
   ]
