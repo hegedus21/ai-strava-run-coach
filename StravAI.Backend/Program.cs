@@ -259,7 +259,7 @@ public static class SeasonStrategyEngine {
             var raceTime = customRace?.TargetTime ?? envGetter("GOAL_RACE_TIME");
             var raceDist = customRace?.Distance ?? "Unknown";
 
-            LocalLog($"[STEP 1/5] Initiating Deep History Analysis for '{raceName}' (Target: 1000 Activities)...");
+            LocalLog($"[STEP 1/5] Initiating Career History Analysis (Target: 1000 Activities)...");
             using var client = clientFactory.CreateClient();
             
             var authRes = await client.PostAsync("https://www.strava.com/oauth/token", new FormUrlEncodedContent(new[] {
@@ -274,16 +274,15 @@ public static class SeasonStrategyEngine {
             
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
             
-            LocalLog("[STEP 2/5] Fetching activity history for career-level context...");
+            LocalLog("[STEP 2/5] Compiling physiological data points from past activities...");
             var allActivities = new List<JsonElement>();
             for (int page = 1; page <= 5; page++) {
-                var pageRes = await client.GetFromJsonAsync<List<JsonElement>>($"https://www.strava.com/api/v3/athlete/activities?per_page=200&page={page}");
+                var pageRes = await client.GetFromJsonAsync<List<JsonElement>>($"($"https://www.strava.com/api/v3/athlete/activities?per_page=200&page={page}"));
                 if (pageRes == null || pageRes.Count == 0) break;
                 allActivities.AddRange(pageRes);
                 if (allActivities.Count >= 1000) break;
             }
 
-            LocalLog($"[STEP 3/5] Compressing {allActivities.Count} data points...");
             var historySummary = string.Join("\n", allActivities.Take(1000).Select(a => {
                 var type = a.TryGetProperty("type", out var t) ? t.GetString() : "Unknown";
                 var date = a.TryGetProperty("start_date", out var d) ? d.GetString() : "Unknown";
@@ -293,66 +292,66 @@ public static class SeasonStrategyEngine {
                 return $"{date}: {type}, {dist:F2}km, Pace: {pace:F2}m/k";
             }));
 
-            LocalLog($"[STEP 4/5] Engaging AI Engine (Realism Analysis & Grounding)...");
+            LocalLog($"[STEP 3/5] Engaging AI Reasoner ({ (customRace != null ? "Multi-Planner Mode" : "Standard Mode") })...");
             
-            // If we have a URL, use search grounding for better intel
             bool useSearch = !string.IsNullOrEmpty(customRace?.InfoUrl);
             var modelName = useSearch ? "gemini-3-pro-image-preview" : "gemini-3-flash-preview";
             
-            var prompt = $@"ROLE: Elite Performance Strategy Consultant & High-Performance Running Coach.
+            var prompt = $@"ROLE: Elite Ultra-Running Performance Strategist.
 ATHLETE TARGET: {raceName} ({raceDist}) on {raceDate} (Target Time: {raceTime}).
-{ (useSearch ? $"RACE INFORMATION URL: {customRace.InfoUrl}" : "") }
+{ (useSearch ? $"RACE DESCRIPTION URL: {customRace.InfoUrl}" : "") }
 
-TASK: Perform a deep physiological analysis using the athlete's history (1000 activities) to generate a customized strategy and assess the realism of the target.
+TASK: Perform a mathematical feasibility assessment and season plan using the history below (1000 items).
 
-ATHLETE HISTORY CONTEXT:
+ATHLETE HISTORY:
 {historySummary}
 
-REQUIRED SECTIONS (Markdown):
+REQUIREMENTS:
+1. GOAL REALISM & FEASIBILITY ASSESSMENT: 
+   - Calculate current Functional Threshold Pace (FTP) from history.
+   - Compare with required pace for {raceTime}.
+   - Provide a probability score (%) and suggest Silver/Bronze alternative goals if needed.
 
-1. GOAL REALISM & FEASIBILITY ASSESSMENT:
-   - Provide a probability score (%) for hitting the target time.
-   - Analyze the gap between current Functional Threshold Pace (FTP) and required race pace.
-   - If unrealistic, suggest a specific 'Silver Goal' and 'Bronze Goal' that are mathematically achievable.
-
-2. EXECUTIVE SUMMARY:
-   Fitness trends based on full history.
-
-3. RACE PACE STRATEGY (3 TIERS):
-   - OPTIMISTIC, REALISTIC, PESSIMISTIC metrics.
-
-4. NUTRITION & REFRESHMENT PLAN:
-   Carbs/hour and hydration frequency.
-
-5. LOGISTICS & GEAR STRATEGY:
-   - Terrain-specific gear advice.
-
+2. EXECUTIVE SUMMARY: Fitness trends based on full history.
+3. RACE PACE STRATEGY (3 TIERS): Optimistic, Realistic, Pessimistic.
+4. NUTRITION & REFRESHMENT PLAN: Carbs/hour and specific intake frequency.
+5. LOGISTICS & GEAR STRATEGY: Grounding advice based on terrain found at the URL (if provided).
 6. REMAINING SEASON FOCUS & NEXT 7 DAYS ACTION PLAN.
 
-INSTRUCTION: If a URL was provided, prioritize data from the race site (elevation, terrain).";
+INSTRUCTION: Output strictly Markdown.";
 
             client.DefaultRequestHeaders.Authorization = null;
             var apiKey = envGetter("API_KEY");
             
-            object payload = useSearch 
-                ? new { contents = new[] { new { parts = new[] { new { text = prompt } } } }, config = new { tools = new[] { new { googleSearch = new { } } } } }
-                : new { contents = new[] { new { parts = new[] { new { text = prompt } } } } };
+            // Correct REST API Structure for Tools (at root level)
+            var payload = new {
+                contents = new[] {
+                    new {
+                        parts = new[] {
+                            new { text = prompt }
+                        }
+                    }
+                },
+                tools = useSearch ? new[] { new { googleSearch = new { } } } : null
+            };
 
             var geminiRes = await client.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/{modelName}:generateContent?key={apiKey}", payload);
             
-            if (!geminiRes.IsSuccessStatusCode) { LocalLog("AI API FAILED.", "ERROR"); return; }
+            if (!geminiRes.IsSuccessStatusCode) {
+                var errContent = await geminiRes.Content.ReadAsStringAsync();
+                LocalLog($"AI API FAILED: {errContent}", "ERROR");
+                return;
+            }
 
             var aiRes = await geminiRes.Content.ReadFromJsonAsync<JsonElement>();
             var aiText = aiRes.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString();
 
-            LocalLog("[STEP 5/5] Storing Plan to Strava Storage...");
+            LocalLog("[STEP 4/5] Syncing intelligence with Strava Cloud Storage...");
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
             
-            // Unique storage name based on race
             string storageNamePrefix = customRace != null ? $"[StravAI] RACE_PLAN: {customRace.Name}" : "[StravAI] SEASON_PLAN_ULTRA_COACH";
             long? storageId = null;
             
-            // Find or create activity on Jan 1st (as our "Digital Training Manual")
             var startOfYear = new DateTime(DateTime.UtcNow.Year, 1, 1, 10, 0, 0, DateTimeKind.Utc);
             var janActivities = await client.GetFromJsonAsync<List<JsonElement>>($"https://www.strava.com/api/v3/athlete/activities?before={new DateTimeOffset(startOfYear.AddDays(2)).ToUnixTimeSeconds()}&after={new DateTimeOffset(startOfYear.AddDays(-2)).ToUnixTimeSeconds()}");
             
@@ -378,9 +377,9 @@ INSTRUCTION: If a URL was provided, prioritize data from the race site (elevatio
             }
 
             if (storageId.HasValue) {
-                var finalReport = $"# {raceName.ToUpper()} - STRATEGY & FEASIBILITY\nAnalysis Date: {timeGetter()} CET\n\n{aiText}\n\n*[StravAI-Processed]*";
+                var finalReport = $"# {raceName.ToUpper()} - STRATEGY & FEASIBILITY\nAnalysis: {timeGetter()} CET\n\n{aiText}\n\n*[StravAI-Processed]*";
                 await client.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{storageId.Value}", new { description = finalReport });
-                LocalLog($"SUCCESS: Strategy stored (ID: {storageId.Value}).", "SUCCESS");
+                LocalLog($"[STEP 5/5] SUCCESS: Comprehensive strategy deployed (ID: {storageId.Value}).", "SUCCESS");
             }
         } catch (Exception ex) { LocalLog($"CRITICAL ENGINE ERROR: {ex.Message}", "ERROR"); }
     }
