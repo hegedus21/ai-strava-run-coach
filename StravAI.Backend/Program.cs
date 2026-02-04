@@ -108,7 +108,7 @@ app.MapPost("/sync", (IHttpClientFactory clientFactory) => {
 // Single ID Sync
 app.MapPost("/sync/{id}", (long id, IHttpClientFactory clientFactory) => {
     AddLog($"AUTH_ACTION: Force Sync for Activity {id}.");
-    _ = Task.Run(() => ProcessActivityAsync(id, clientFactory, GetEnv, AddLog, GetCetTimestamp));
+    _ = Task.Run(() => ProcessActivityAsync(id, clientFactory, GetEnv, AddLog, GetCetTimestamp, true));
     return Results.Accepted();
 });
 
@@ -135,7 +135,7 @@ app.Run();
 
 // --- Core Logic ---
 
-async Task ProcessActivityAsync(long id, IHttpClientFactory clientFactory, Func<string, string> envGetter, Action<string, string> logger, Func<string> timeGetter) {
+async Task ProcessActivityAsync(long id, IHttpClientFactory clientFactory, Func<string, string> envGetter, Action<string, string> logger, Func<string> timeGetter, bool force = false) {
     try {
         using var client = clientFactory.CreateClient();
         var token = await SeasonStrategyEngine.GetStravaAccessToken(client, envGetter);
@@ -145,13 +145,15 @@ async Task ProcessActivityAsync(long id, IHttpClientFactory clientFactory, Func<
         // Detailed activity fetch to check description
         var act = await client.GetFromJsonAsync<JsonElement>($"https://www.strava.com/api/v3/activities/{id}");
         
-        string description = act.TryGetProperty("description", out var descProp) ? descProp.GetString() ?? "" : "";
-        string lowerDesc = description.ToLower();
-        
-        // Skip if analysis already exists
-        if (lowerDesc.Contains("stravai report") || lowerDesc.Contains("[stravai-processed]")) {
-             logger($"Activity {id} already has analysis. Skipping.", "INFO");
-             return;
+        if (!force) {
+            string description = act.TryGetProperty("description", out var descProp) ? descProp.GetString() ?? "" : "";
+            string lowerDesc = description.ToLower();
+            
+            // Skip if analysis already exists
+            if (lowerDesc.Contains("stravai report") || lowerDesc.Contains("[stravai-processed]")) {
+                 logger($"Activity {id} already has analysis. Skipping.", "INFO");
+                 return;
+            }
         }
 
         var history = await client.GetFromJsonAsync<List<JsonElement>>("https://www.strava.com/api/v3/athlete/activities?per_page=10");
@@ -164,7 +166,7 @@ async Task ProcessActivityAsync(long id, IHttpClientFactory clientFactory, Func<
             histSummary += $"- {date}: {dist:F1}km @ {pace:F2}m/k\n";
         }
 
-        client.DefaultRequestHeaders.Authorization = null; // Fix 401 for Gemini
+        client.DefaultRequestHeaders.Authorization = null; // Clear to avoid 401 with Gemini
         var prompt = $"ROLE: Master Performance Running Coach. GOAL: {envGetter("GOAL_RACE_TYPE")} on {envGetter("GOAL_RACE_DATE")}.\n" +
                      $"TASK: Analyze this workout: {act.GetRawText()}.\n" +
                      $"HISTORY SUMMARY:\n{histSummary}\n\n" +
@@ -177,6 +179,7 @@ async Task ProcessActivityAsync(long id, IHttpClientFactory clientFactory, Func<
             var aiRes = await geminiRes.Content.ReadFromJsonAsync<JsonElement>();
             var aiText = aiRes.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString();
             var desc = (act.TryGetProperty("description", out var d) ? d.GetString() : "") + $"\n\n--- StravAI Report ---\n{aiText}\n\nProcessed: {timeGetter()}";
+            
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
             await client.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{id}", new { description = desc });
             logger($"Activity {id} updated successfully.", "SUCCESS");
@@ -213,7 +216,7 @@ public static class SeasonStrategyEngine {
             var historyData = await client.GetFromJsonAsync<List<JsonElement>>("https://www.strava.com/api/v3/athlete/activities?per_page=200");
             var historySummary = summarizer(historyData ?? new());
 
-            client.DefaultRequestHeaders.Authorization = null;
+            client.DefaultRequestHeaders.Authorization = null; // Fix 401
 
             var prompt = $@"ATHLETE GOAL: {(customRace?.Name ?? envGetter("GOAL_RACE_TYPE"))} on {(customRace?.Date ?? envGetter("GOAL_RACE_DATE"))} (Target Time: {(customRace?.TargetTime ?? envGetter("GOAL_RACE_TIME"))}).
 HISTORY CONTEXT (Up to 1000 Activities - FULL HISTORY):
@@ -231,23 +234,20 @@ REQUIRED SECTIONS IN OUTPUT (Markdown):
 
 2. FEASIBILITY & GOAL CALIBRATION:
    - Calculate Functional Threshold Pace (FTP) and Aerobic Base from history.
-   - Compare to target pace. Provide FEASIBILITY PROBABILITY (%).
-   - Suggest Silver (Progressive) and Bronze (Safe Finish) goals if main goal is too aggressive.
+   - Provide a FEASIBILITY PROBABILITY (%).
+   - Suggest Silver (Progressive) and Bronze (Safe Finish) goals.
 
 3. RACE PACE STRATEGY (3 TIERS):
    - OPTIMISTIC, REALISTIC, PESSIMISTIC.
 
 4. NUTRITION & REFRESHMENT PLAN:
-   Detailed hydration/nutrition strategy based on loop details provided.
+   Detailed hydration/nutrition strategy based on loop details.
 
-5. LOGISTICS & GEAR STRATEGY:
-   What to carry, Aid Station Swaps.
+5. LOGISTICS & GEAR STRATEGY.
 
-6. REMAINING SEASON FOCUS:
-   Key training themes.
+6. REMAINING SEASON FOCUS.
 
-7. NEXT 7 DAYS - ACTION PLAN:
-   Immediate 7-day plan.
+7. NEXT 7 DAYS - ACTION PLAN.
 
 INSTRUCTION: Professional coaching tone. Markdown only. Processed: {timeGetter()}";
 
@@ -257,29 +257,36 @@ INSTRUCTION: Professional coaching tone. Markdown only. Processed: {timeGetter()
             if (geminiRes.IsSuccessStatusCode) {
                 var aiRes = await geminiRes.Content.ReadFromJsonAsync<JsonElement>();
                 var aiText = aiRes.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString();
+                string finalDesc = $"{aiText}\n\nProcessed: {timeGetter()}";
 
                 client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
                 string targetTitle = $"[StravAI] STRATEGY: {(customRace?.Name ?? "Full Season Plan")}";
                 
-                // Search for existing strategy activity to update it
+                // Search for existing strategy activity
                 var recent = await client.GetFromJsonAsync<List<JsonElement>>("https://www.strava.com/api/v3/athlete/activities?per_page=50");
-                var existing = recent?.FirstOrDefault(a => a.GetProperty("name").GetString() == targetTitle);
-                if (existing != null && existing.Value.TryGetProperty("id", out var eid)) {
-                    L($"Updating existing strategy activity: {eid.GetInt64()}");
-                    await client.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{eid.GetInt64()}", new { description = aiText, @private = true });
-                    L($"{targetTitle} Updated.", "SUCCESS"); 
-                    return;
+                JsonElement? existing = null;
+                foreach (var a in recent ?? new()) {
+                    if (a.TryGetProperty("name", out var nameProp) && nameProp.GetString() == targetTitle) {
+                        existing = a;
+                        break;
+                    }
                 }
 
-                await client.PostAsJsonAsync("https://www.strava.com/api/v3/activities", new {
-                    name = targetTitle,
-                    type = "Workout",
-                    start_date_local = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
-                    elapsed_time = 1,
-                    description = aiText,
-                    @private = true
-                });
-                L($"{targetTitle} Deployed as Private Activity.", "SUCCESS");
+                if (existing.HasValue && existing.Value.TryGetProperty("id", out var eid)) {
+                    L($"Updating existing strategy: {eid.GetInt64()}");
+                    await client.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{eid.GetInt64()}", new { description = finalDesc, @private = true });
+                    L($"{targetTitle} Updated.", "SUCCESS"); 
+                } else {
+                    await client.PostAsJsonAsync("https://www.strava.com/api/v3/activities", new {
+                        name = targetTitle,
+                        type = "Workout",
+                        start_date_local = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+                        elapsed_time = 1,
+                        description = finalDesc,
+                        @private = true
+                    });
+                    L($"{targetTitle} Deployed as Private.", "SUCCESS");
+                }
             }
         } catch (Exception ex) { L($"Season Analysis Error: {ex.Message}", "ERROR"); }
     }
