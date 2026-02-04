@@ -85,8 +85,8 @@ string CompactSummarize(List<JsonElement> activities) {
 
 // --- Routes ---
 
-app.MapGet("/", () => "StravAI Engine v1.2.1 is Online.");
-app.MapGet("/health", () => Results.Ok(new { status = "healthy", engine = "StravAI_Core_v1.2.1" }));
+app.MapGet("/", () => "StravAI Engine v1.2.2 is Online.");
+app.MapGet("/health", () => Results.Ok(new { status = "healthy", engine = "StravAI_Core_v1.2.2" }));
 app.MapGet("/logs", () => Results.Ok(logs.ToArray()));
 
 app.MapPost("/sync/custom-race", ([FromBody] CustomRaceRequest req, IHttpClientFactory clientFactory) => {
@@ -117,8 +117,12 @@ async Task ProcessActivityAsync(long id, IHttpClientFactory clientFactory, Func<
         using var client = clientFactory.CreateClient();
         var token = await SeasonStrategyEngine.GetStravaAccessToken(client, envGetter);
         if (token == null) return;
+        
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
         var act = await client.GetFromJsonAsync<JsonElement>($"https://www.strava.com/api/v3/activities/{id}");
+        
+        // CRITICAL: Clear Strava auth before calling Gemini to avoid 401
+        client.DefaultRequestHeaders.Authorization = null;
         
         var prompt = $"Analyze this run for an athlete training for a {envGetter("GOAL_RACE_TYPE")}:\n{act.GetRawText()}\n\nOutput strictly Markdown.";
         var apiKey = envGetter("API_KEY");
@@ -128,8 +132,14 @@ async Task ProcessActivityAsync(long id, IHttpClientFactory clientFactory, Func<
             var aiRes = await geminiRes.Content.ReadFromJsonAsync<JsonElement>();
             var aiText = aiRes.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString();
             var desc = (act.TryGetProperty("description", out var d) ? d.GetString() : "") + $"\n\n--- StravAI Report ---\n{aiText}\n\nProcessed: {timeGetter()}";
+            
+            // Re-apply Strava auth to update the activity
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
             await client.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{id}", new { description = desc });
             logger($"Activity {id} updated successfully.", "SUCCESS");
+        } else {
+            var err = await geminiRes.Content.ReadAsStringAsync();
+            logger($"AI Analysis Failed: {err}", "ERROR");
         }
     } catch (Exception ex) { logger($"Analysis Error: {ex.Message}", "ERROR"); }
 }
@@ -164,6 +174,9 @@ public static class SeasonStrategyEngine {
             var activities = await client.GetFromJsonAsync<List<JsonElement>>("https://www.strava.com/api/v3/athlete/activities?per_page=200");
             var summaryText = summarizer(activities ?? new());
 
+            // CRITICAL: Clear Strava auth before calling Gemini to avoid 401
+            client.DefaultRequestHeaders.Authorization = null;
+
             var prompt = $@"ROLE: Elite Ultra Performance Strategist. 
 ATHLETE GOAL: {(customRace?.Name ?? "Main Season Goal")} ({(customRace?.Distance ?? "Target Distance")}) on {(customRace?.Date ?? "Target Date")}.
 TARGET FINISH TIME: {(customRace?.TargetTime ?? "TBD")}.
@@ -175,8 +188,8 @@ ATHLETE PERFORMANCE HISTORY (MONTHLY AGGREGATE):
 {summaryText}
 
 TASK:
-1. GOAL REALISM CHECK: Based on history, how feasible is the {customRace?.TargetTime ?? "goal"}? Provide a % probability.
-2. NUTRITION & REFRESHMENT PLAN: Analyze the provided specifics (loops/refreshments) and create a timed intake schedule.
+1. GOAL REALISM CHECK: Based on history, how feasible is the {customRace?.TargetTime ?? "goal"}? Provide a % probability score.
+2. NUTRITION & REFRESHMENT PLAN: Deeply analyze the provided loop length and refreshment availability. Create a timed intake schedule (e.g., 'Every X loops/minutes, consume Y').
 3. PACING STRATEGY: Provide 3 tiers (Optimistic, Realistic, Survival) based on the course specifics provided.
 4. RECOVERY & PREP: Suggest training adjustments for the remaining time.
 
@@ -204,6 +217,9 @@ INSTRUCTION: Output strictly Markdown.";
             var aiText = aiRes.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString();
 
             L("Generating Strava Strategy Document...");
+            
+            // Re-apply Strava auth to save the report
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
             await client.PostAsJsonAsync("https://www.strava.com/api/v3/activities", new {
                 name = $"[StravAI] RACE_STRATEGY: {customRace?.Name ?? "Season Plan"}",
                 type = "Workout",
