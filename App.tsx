@@ -143,7 +143,7 @@ const App: React.FC = () => {
           <div>
             <h1 className="text-white font-black tracking-tighter uppercase text-sm flex items-center gap-2">
               StravAI_Command_Center
-              <span className="text-[10px] text-cyan-500 font-bold border border-cyan-500/20 px-1.5 rounded text-glow">v1.0.1_PRO_GOLD</span>
+              <span className="text-[10px] text-cyan-500 font-bold border border-cyan-500/20 px-1.5 rounded text-glow">v1.1.0_ULTRA_COACH</span>
             </h1>
             <div className="flex items-center gap-3 text-[9px] uppercase font-bold tracking-widest mt-0.5">
               <div className="flex items-center gap-1.5">
