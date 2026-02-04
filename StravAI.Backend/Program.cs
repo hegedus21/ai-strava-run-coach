@@ -277,7 +277,7 @@ public static class SeasonStrategyEngine {
             LocalLog("[STEP 2/5] Compiling physiological data points from past activities...");
             var allActivities = new List<JsonElement>();
             for (int page = 1; page <= 5; page++) {
-                var pageRes = await client.GetFromJsonAsync<List<JsonElement>>($"($"https://www.strava.com/api/v3/athlete/activities?per_page=200&page={page}"));
+                var pageRes = await client.GetFromJsonAsync<List<JsonElement>>($"https://www.strava.com/api/v3/athlete/activities?per_page=200&page={page}");
                 if (pageRes == null || pageRes.Count == 0) break;
                 allActivities.AddRange(pageRes);
                 if (allActivities.Count >= 1000) break;
