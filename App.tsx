@@ -162,7 +162,7 @@ const App: React.FC = () => {
           <div>
             <h1 className="text-white font-black uppercase text-sm flex items-center gap-2">
               StravAI_Command
-              <span className="text-[10px] text-cyan-500 font-bold border border-cyan-500/20 px-1.5 rounded">v1.2.3_ULTRA</span>
+              <span className="text-[10px] text-cyan-500 font-bold border border-cyan-500/20 px-1.5 rounded">v1.3.0_ULTRA_STABLE</span>
             </h1>
             <div className={`text-[9px] uppercase font-bold tracking-widest mt-0.5 ${backendStatus === 'ONLINE' ? 'text-cyan-400' : 'text-red-500'}`}>
               {backendStatus}
@@ -192,7 +192,7 @@ const App: React.FC = () => {
                </div>
                
                <div className="flex gap-2">
-                 <div className="w-1/2">
+                 <div className="w-1/2 flex flex-col">
                    <input 
                     type="text" 
                     placeholder="YYYY-MM-DD" 
@@ -200,10 +200,10 @@ const App: React.FC = () => {
                     onChange={e=>{setCrDate(e.target.value); setValidationErrors(p => ({...p, crDate: ''}))}} 
                     className={getInputClass('crDate', "placeholder:text-[9px]")}
                    />
-                   <p className="text-[8px] text-slate-600 mt-1 uppercase font-bold">DATE (YYYY-MM-DD)</p>
+                   <p className="text-[8px] text-slate-600 mt-1 uppercase font-bold truncate">DATE (YYYY-MM-DD)</p>
                    {validationErrors.crDate && <p className="text-[8px] text-red-500 uppercase font-bold">REQUIRED</p>}
                  </div>
-                 <div className="w-1/2">
+                 <div className="w-1/2 flex flex-col">
                    <input 
                     type="text" 
                     placeholder="GOAL TIME" 
@@ -211,7 +211,7 @@ const App: React.FC = () => {
                     onChange={e=>{setCrTarget(e.target.value); setValidationErrors(p => ({...p, crTarget: ''}))}} 
                     className={getInputClass('crTarget', "placeholder:text-[9px]")}
                    />
-                   <p className="text-[8px] text-slate-600 mt-1 uppercase font-bold">GOAL TIME</p>
+                   <p className="text-[8px] text-slate-600 mt-1 uppercase font-bold truncate">GOAL TIME</p>
                    {validationErrors.crTarget && <p className="text-[8px] text-red-500 uppercase font-bold">REQUIRED</p>}
                  </div>
                </div>
