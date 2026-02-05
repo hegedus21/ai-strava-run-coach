@@ -5,8 +5,8 @@ import { StravAILogo } from './Icon';
  * Asset resolution using root-relative string paths.
  * This avoids "Invalid URL" errors from new URL() in environments with restricted import.meta support.
  */
-const stravaImg1 = 'components/Athelte_Intelligence_Strava.jpg';
-const stravaImg2 = 'components/Athelte_Intelligence_Strava_2.jpg';
+const stravaImg1 = './Athelte_Intelligence_Strava.jpg';
+const stravaImg2 = './Athelte_Intelligence_Strava.jpg';
 
 interface Slide {
   title: string;
