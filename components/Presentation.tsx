@@ -6,8 +6,8 @@ import { StravAILogo } from './Icon';
  * In a native ESM browser environment, imports for images are not supported.
  * We point to the 'components' folder where these assets are conceptually stored.
  */
-const stravaImg1 = 'components/Athelte_Intelligence_Strava.jpg';
-const stravaImg2 = 'components/Athelte_Intelligence_Strava_2.jpg';
+const stravaImg1 = './images/Athelte_Intelligence_Strava.jpg';
+const stravaImg2 = '/images/Athelte_Intelligence_Strava_2.jpg';
 
 interface Slide {
   title: string;
