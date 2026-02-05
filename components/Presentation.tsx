@@ -21,7 +21,7 @@ interface Slide {
 const slides: Slide[] = [
   {
     tag: "01_START",
-    title: "STRAVAI COACH",
+    title: "WHAT IS IT",
     subtitle: "The Personal Training Revolution.",
     content: [
       "A service built in .NET to bridge the gap between human athletic potential and artificial intelligence.",
@@ -33,7 +33,7 @@ const slides: Slide[] = [
   },
   {
     tag: "02_WHY",
-    title: "THE CATALYST",
+    title: "HOW IT STARTED",
     subtitle: "Trial Ended, Mission Started.",
     content: [
       "My 30-day Strava Premium trial ended. I lost access to 'Athlete Intelligence' and training suggestions.",
