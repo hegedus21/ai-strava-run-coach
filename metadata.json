@@ -1,9 +1,8 @@
-
 {
   "name": "StravAI Coach",
-  "version": "1.2.0-multi-planner",
+  "version": "1.3.0-ultra-stable",
   "release_state": "Advanced Career Intelligence",
-  "description": "High-performance autonomous coaching engine now featuring a Multi-Race Planner with Google Search grounding for race-specific strategy and feasibility analysis.",
+  "description": "High-performance autonomous coaching engine now featuring robust UI validation, race-specific planning, and deep history grounding.",
   "requestFramePermissions": [
     "geolocation"
   ]
