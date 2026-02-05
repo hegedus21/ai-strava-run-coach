@@ -2,7 +2,7 @@
 
 All notable changes to the StravAI Coach project will be documented in this file.
 
-## [1.3.0-ultra-stable] - 2025-03-24
+## [1.3.0-ultra-stable] - 2026-02-05
 ### "The Stable Command Center Update"
 
 This version focuses on UI reliability, input integrity, and professional presentation.
@@ -15,7 +15,7 @@ This version focuses on UI reliability, input integrity, and professional presen
 - **Input Layout**: Corrected placeholder clipping for Date fields on desktop viewports.
 - **Label Clarity**: Renamed operational buttons and section headers to use professional coaching terminology (e.g., "Analyse Main Race", "Analyse Recent Activities").
 
-## [1.2.0-multi-planner] - 2025-03-24
+## [1.2.0-multi-planner] - 2026-02-03
 ### "The Multi-Race Intelligence Update"
 
 This version introduces the ability to plan and analyze specific races beyond the main season goal.
@@ -26,8 +26,8 @@ This version introduces the ability to plan and analyze specific races beyond th
 - **Goal Realism Engine**: Integrated feasibility analysis that compares historical performance (up to 1000 activities) against target race metrics to provide a success probability.
 - **Dynamic Strava Storage**: Automatically creates/updates dedicated private Strava activities for each unique custom race.
 
-## [1.1.0-ultra-coach] - 2025-03-24
-### "The Deep Performance Update" (Stable Version 2)
+## [1.1.0-ultra-coach] - 2026-01-29
+### "The Deep Performance Update"
 - Added Ultra Season Strategy Engine.
 - Deep 1000-activity history context.
 - Scheduled Sunday analysis.
