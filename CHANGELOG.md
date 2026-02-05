@@ -2,6 +2,19 @@
 
 All notable changes to the StravAI Coach project will be documented in this file.
 
+## [1.3.0-ultra-stable] - 2025-03-24
+### "The Stable Command Center Update"
+
+This version focuses on UI reliability, input integrity, and professional presentation.
+
+#### Added
+- **UI Validation Layer**: Implemented pre-flight checks for all mission-critical inputs. The command terminal now blocks invalid data transmission to the cloud engine.
+- **Visual Error Feedback**: Added pulsing red state alerts and high-visibility error labels for missing required fields (Race Name, Date, Goal Time).
+
+#### Fixed
+- **Input Layout**: Corrected placeholder clipping for Date fields on desktop viewports.
+- **Label Clarity**: Renamed operational buttons and section headers to use professional coaching terminology (e.g., "Analyse Main Race", "Analyse Recent Activities").
+
 ## [1.2.0-multi-planner] - 2025-03-24
 ### "The Multi-Race Intelligence Update"
 
@@ -12,10 +25,6 @@ This version introduces the ability to plan and analyze specific races beyond th
 - **Google Search Grounding**: The AI now browses provided race URLs to ingest elevation profiles, terrain types, and weather data for more accurate strategy generation.
 - **Goal Realism Engine**: Integrated feasibility analysis that compares historical performance (up to 1000 activities) against target race metrics to provide a success probability.
 - **Dynamic Strava Storage**: Automatically creates/updates dedicated private Strava activities for each unique custom race.
-
-#### Changed
-- **AI Model Selection**: Upgraded the custom analysis engine to `gemini-3-pro-image-preview` when search tools are required.
-- **Prompt Architecture**: Re-engineered to include a "Feasibility & Goal Calibration" section.
 
 ## [1.1.0-ultra-coach] - 2025-03-24
 ### "The Deep Performance Update" (Stable Version 2)
