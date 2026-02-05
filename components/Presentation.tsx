@@ -8,6 +8,13 @@ import { StravAILogo } from './Icon';
  */
 const stravaImg1 = './images/Athelte_Intelligence_Strava.jpg';
 const stravaImg2 = './images/Athelte_Intelligence_Strava_2.jpg';
+const stravaTrainingSuggestion1 = './images/Strava_training_suggestion_1.jpg';
+const stravaTrainingSuggestion2 = './images/Strava_training_suggestion_2.jpg';
+const stravaTrainingSuggestion3 = './images/Strava_training_suggestion_3.jpg';
+const stravaReport = './images/Strava.jpg';
+const stravaActivity = './images/StravaAI.jpg';
+const garminCoach1 = './images/Garmin_coach_1.jpg';
+const garminCoach2 = './images/Garmin_coach_2.jpg';
 
 interface Slide {
   title: string;
@@ -29,7 +36,7 @@ const slides: Slide[] = [
       "Engineered for the data-driven athlete who wants more than just a summary."
     ],
     tech: [".NET 9", "Minimal API", "Strava API"],
-    images: ["https://images.unsplash.com/photo-1476480862126-209bfaa8edc8?auto=format&fit=crop&q=80&w=800"]
+    images: [stravaReport]
   },
   {
     tag: "02_WHY",
@@ -41,7 +48,7 @@ const slides: Slide[] = [
       "The friction of manual exports led to one conclusion: I needed a direct API bridge to the AI coach."
     ],
     tech: ["API Integration", "Automation"],
-    images: [stravaImg1, stravaImg2]
+    images: [stravaImg1, stravaImg2, stravaTrainingSuggestion1, stravaTrainingSuggestion2, stravaTrainingSuggestion3]
   },
   {
     tag: "03_RESEARCH",
@@ -53,7 +60,7 @@ const slides: Slide[] = [
       "Our focus: Personalized race-day nutrition, pace plans, and 'Readiness %' based on long-term data."
     ],
     tech: ["Competitive Analysis", "Strategy"],
-    images: ["https://images.unsplash.com/photo-1551288049-bbbda536339a?auto=format&fit=crop&q=80&w=800"]
+    images: [garminCoach1, garminCoach2]
   },
   {
     tag: "04_GENESIS",
@@ -89,7 +96,7 @@ const slides: Slide[] = [
       "Leveraging Gemini Flash for high-speed, cost-effective reasoning."
     ],
     tech: ["Gemini 3 Flash", "Neural Logic"],
-    images: ["https://images.unsplash.com/photo-1677442136019-21780ecad995?auto=format&fit=crop&q=80&w=800"]
+    images: [stravaActivity]
   },
   {
     tag: "07_BENEFITS",
