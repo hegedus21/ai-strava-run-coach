@@ -7,69 +7,109 @@ interface Slide {
   content: string[];
   tech?: string[];
   tag: string;
-  image?: string; // Add your image URL here
+  images?: string[]; // Support multiple images
 }
 
 const slides: Slide[] = [
   {
-    tag: "01_THE_SPARK",
+    tag: "01_START",
     title: "STRAVAI COACH",
-    subtitle: "Necessity is the Mother of Innovation.",
+    subtitle: "The Project Inception.",
     content: [
-      "It started when my Strava Premium trial ended. I lost access to 'Athlete Intelligence' and training suggestions.",
-      "I didn't want a monthly subscription—I wanted my data to work for me.",
-      "Manually exporting logs to ChatGPT was a pain. I needed a direct bridge between my Strava history and an LLM."
+      "Born from a desire to turn raw GPS data into actionable coaching intelligence.",
+      "A bridge between the Strava API and the reasoning power of Gemini 3.",
+      "Developed entirely through AI-human collaboration."
     ],
-    tech: ["Strava API", "Gemini 3"],
-    image: "https://images.unsplash.com/photo-1476480862126-209bfaa8edc8?auto=format&fit=crop&q=80&w=800" // Placeholder
+    tech: ["React", ".NET 9", "Gemini 3"],
+    images: ["https://images.unsplash.com/photo-1476480862126-209bfaa8edc8?auto=format&fit=crop&q=80&w=800"]
   },
   {
-    tag: "02_MARKET_GAP",
-    title: "THE MISSING PIECE",
-    subtitle: "Beyond General Suggestions.",
+    tag: "02_WHY",
+    title: "THE CATALYST",
+    subtitle: "Beyond the Paywall.",
     content: [
-      "Strava AI only looks at the last 30 days. Garmin plans stop at the Half Marathon.",
-      "StravAI scans up to 1,000 activities to find your true fitness signature.",
-      "Features: Specific race-day nutrition, pace plans (Pessimistic vs. Optimistic), and 'Readiness %' based on months of data."
+      "My Strava Premium trial ended, taking 'Athlete Intelligence' and training suggestions with it.",
+      "I didn't want to pay a subscription for features I could build myself.",
+      "Manual exporting of logs to LLMs was tedious; I needed an automated API-driven solution."
     ],
-    tech: ["Market Research", "Competitive Edge"],
-    image: "https://images.unsplash.com/photo-1552674605-db6ffd4facb5?auto=format&fit=crop&q=80&w=800" // Placeholder
+    tech: ["Strava API", "Automation"],
+    // Referencing two images. Update these paths to your local ones if needed (e.g., ["./components/images/image1.jpg", "./components/images/image2.jpg"])
+    images: [
+      "https://images.unsplash.com/photo-1517430816045-df4b7de11d1d?auto=format&fit=crop&q=80&w=800",
+      "https://images.unsplash.com/photo-1512446813985-4a0eb173b7a6?auto=format&fit=crop&q=80&w=800"
+    ]
   },
   {
-    tag: "03_AI_SYNERGY",
-    title: "ZERO TO PODIUM",
-    subtitle: "Developing without Documentation.",
+    tag: "03_RESEARCH",
+    title: "MARKET GAP",
+    subtitle: "Scanning 1,000 Activities, Not Just 30.",
     content: [
-      "I didn't study the Strava API docs. I used Google AI Studio as my lead architect.",
-      "From initial idea to a working Proof of Concept (PoC) in just a few hours.",
-      "Rapid prototyping: AI generated the .NET backend, the React UI, and the deployment scripts simultaneously."
+      "Strava AI is limited to 30 days. Garmin plans only go up to the Half Marathon.",
+      "StravAI scans your entire history (up to 1,000 activities) for true fitness mapping.",
+      "Focus: Race-specific plans, pace strategies (Optimistic/Realistic), and nutrition logic."
     ],
-    tech: ["Google AI Studio", "Rapid PoC"],
-    image: "https://images.unsplash.com/photo-1677442136019-21780ecad995?auto=format&fit=crop&q=80&w=800" // Placeholder
+    tech: ["Big Data", "Fitness Intelligence"],
+    images: ["https://images.unsplash.com/photo-1552674605-db6ffd4facb5?auto=format&fit=crop&q=80&w=800"]
   },
   {
-    tag: "04_EVOLUTION",
-    title: "HARDENING THE CORE",
-    subtitle: "Refining the Vision.",
+    tag: "04_GENESIS",
+    title: "THE FIRST SPARK",
+    subtitle: "Google AI Studio as Architect.",
     content: [
-      "We moved from simple syncs to real-time Webhooks and Custom Race configuration.",
-      "Criteria: Everything must run on 'Free Tiers' (Koyeb, GitHub, Gemini Flash).",
-      "The service evolved into a 'Zero Trust' architecture to protect athlete privacy."
+      "Found the Strava API docs but didn't want to spend weeks studying them.",
+      "Used Google AI Studio to translate my ideas into a working project structure.",
+      "Within hours, the first functional version of the cloud engine was alive."
     ],
-    tech: [".NET 9", "Koyeb", "Cloud Native"],
-    image: "https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&q=80&w=800" // Placeholder
+    tech: ["AI Studio", "Rapid Prototyping"],
+    images: ["https://images.unsplash.com/photo-1677442136019-21780ecad995?auto=format&fit=crop&q=80&w=800"]
   },
   {
-    tag: "05_REFLECTIONS",
-    title: "LESSONS LEARNED",
-    subtitle: "The Reality of AI-Driven Development.",
+    tag: "05_EVOLUTION",
+    title: "REFINING THE ENGINE",
+    subtitle: "The 'Everything Free' Architecture.",
     content: [
-      "PROS: Massive speed, no API study needed, perfectly optimized for private use.",
-      "CONS: AI 'forgetfulness'—sometimes it overwrites agreed logic or ignores specific constraints.",
-      "The 'Forgetful Coach' syndrome requires human strategy to maintain project direction."
+      "Criterion: Zero cost. Hosted on Koyeb (Free Tier) with GitHub Actions.",
+      "Evolved from simple activity analysis to deep Custom Race deployments.",
+      "AI guided the setup of tokens, keys, and the Zero Trust security model."
     ],
-    tech: ["Human-in-the-loop", "Future Growth"],
-    image: "https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?auto=format&fit=crop&q=80&w=800" // Placeholder
+    tech: ["Koyeb", "GitHub Actions", ".NET 9"],
+    images: ["https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&q=80&w=800"]
+  },
+  {
+    tag: "06_POWERED_BY_AI",
+    title: "AI INCEPTION",
+    subtitle: "Developed by AI, Analyzed by AI.",
+    content: [
+      "The code was written by AI. The athletic performance is analyzed by AI.",
+      "Leveraging Gemini Flash (Free Tier) for efficient, high-speed reasoning.",
+      "A recursive cycle of intelligence where the tool improves itself."
+    ],
+    tech: ["Gemini 3 Flash", "Neural Analysis"],
+    images: ["https://images.unsplash.com/photo-1620712943543-bcc4628c9757?auto=format&fit=crop&q=80&w=800"]
+  },
+  {
+    tag: "07_PROS",
+    title: "THE SUCCESS",
+    subtitle: "Rapid Proof of Concept.",
+    content: [
+      "Zero documentation study required—the AI understood the API requirements instantly.",
+      "Speed: From concept to production in days rather than months.",
+      "High-level coaching logic available at no cost for private, personal use."
+    ],
+    tech: ["Efficiency", "Low Overhead"],
+    images: ["https://images.unsplash.com/photo-1461896756913-647eecc9a29e?auto=format&fit=crop&q=80&w=800"]
+  },
+  {
+    tag: "08_CHALLENGES",
+    title: "IMPROVEMENTS",
+    subtitle: "Dealing with the 'Forgetful' AI Coach.",
+    content: [
+      "AI 'Forgetfulness': Sometimes it overwrites logic we previously established.",
+      "Instruction Drift: Asking it to 'just discuss' often results in unwanted code changes.",
+      "Context Management: It occasionally refers back to stale requirements from past sessions."
+    ],
+    tech: ["Context Management", "Instruction Following"],
+    images: ["https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?auto=format&fit=crop&q=80&w=800"]
   }
 ];
 
@@ -89,9 +129,9 @@ const Presentation: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const s = slides[current];
 
   return (
-    <div className="fixed inset-0 z-[200] bg-slate-950/98 backdrop-blur-2xl flex flex-col font-mono overflow-hidden">
+    <div className="fixed inset-0 z-[200] bg-slate-950/98 backdrop-blur-3xl flex flex-col font-mono overflow-hidden">
       {/* Header */}
-      <div className="flex justify-between items-center p-6 border-b border-slate-800 bg-slate-900/50">
+      <div className="flex justify-between items-center p-6 border-b border-slate-800 bg-slate-900/80 backdrop-blur-md">
         <div className="flex items-center gap-4">
           <StravAILogo className="w-8 h-8" />
           <span className="text-white font-black tracking-tighter text-lg uppercase">StravAI_Chronicles</span>
@@ -121,7 +161,7 @@ const Presentation: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                 {s.content.map((p, i) => (
                   <div key={i} className="flex gap-4 group">
                     <span className="text-cyan-600 font-bold shrink-0 mt-1">>></span>
-                    <p className="text-slate-300 text-sm md:text-base leading-relaxed group-hover:text-white transition-colors">
+                    <p className="text-slate-300 text-sm md:text-lg leading-relaxed group-hover:text-white transition-colors">
                       {p}
                     </p>
                   </div>
@@ -142,41 +182,45 @@ const Presentation: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
           {/* Right Column: Visual/Image */}
           <div className="lg:col-span-5 order-1 lg:order-2">
-            <div className="relative aspect-square md:aspect-video lg:aspect-square rounded-3xl overflow-hidden border border-slate-800 group shadow-2xl shadow-cyan-500/5">
-              {s.image ? (
-                <img 
-                  src={s.image} 
-                  alt={s.title} 
-                  className="w-full h-full object-cover grayscale opacity-50 group-hover:grayscale-0 group-hover:opacity-100 transition-all duration-1000 scale-110 group-hover:scale-100" 
-                />
+            <div className={`grid gap-4 w-full h-full min-h-[300px] ${s.images && s.images.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+              {s.images && s.images.length > 0 ? (
+                s.images.map((img, idx) => (
+                  <div key={idx} className="relative aspect-square rounded-3xl overflow-hidden border border-slate-800 group shadow-2xl shadow-cyan-500/5 bg-slate-900">
+                    <img 
+                      src={img} 
+                      alt={`${s.title} ${idx + 1}`} 
+                      className="w-full h-full object-cover grayscale opacity-60 group-hover:grayscale-0 group-hover:opacity-100 transition-all duration-1000 scale-105 group-hover:scale-100" 
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1461896756913-647eecc9a29e?auto=format&fit=crop&q=80&w=800';
+                      }}
+                    />
+                    <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-transparent to-transparent opacity-60"></div>
+                    <div className="absolute bottom-4 left-4 right-4">
+                      <div className="bg-slate-900/80 backdrop-blur-md border border-slate-700/50 p-2 rounded-lg">
+                        <span className="text-[7px] text-cyan-500 font-black uppercase tracking-widest">Asset_{idx + 1}</span>
+                      </div>
+                    </div>
+                  </div>
+                ))
               ) : (
-                <div className="w-full h-full bg-slate-900 flex items-center justify-center">
-                  <StravAILogo className="w-32 h-32 opacity-10" />
+                <div className="aspect-square rounded-3xl overflow-hidden border border-slate-800 bg-slate-900 flex items-center justify-center">
+                  <StravAILogo className="w-32 h-32 opacity-10 animate-pulse" />
                 </div>
               )}
-              {/* Overlay Decor */}
-              <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-transparent to-transparent opacity-60"></div>
-              <div className="absolute bottom-6 left-6 right-6">
-                <div className="w-full bg-slate-900/80 backdrop-blur-md border border-slate-700/50 p-4 rounded-xl">
-                  <div className="flex justify-between items-center text-[8px] text-cyan-500 font-black uppercase">
-                    <span>Visual_Asset_{current + 1}</span>
-                    <span>Status: Verified</span>
-                  </div>
-                </div>
-              </div>
             </div>
           </div>
         </div>
       </div>
 
       {/* Navigation Footer */}
-      <div className="p-8 flex justify-between items-center border-t border-slate-800 bg-slate-900/30">
-        <div className="flex gap-3">
+      <div className="p-8 flex justify-between items-center border-t border-slate-800 bg-slate-900/50 backdrop-blur-md">
+        <div className="flex gap-2">
           {slides.map((_, i) => (
             <button 
               key={i} 
               onClick={() => setCurrent(i)}
-              className={`h-1.5 transition-all duration-500 rounded-full ${i === current ? 'w-16 bg-cyan-500' : 'w-4 bg-slate-800 hover:bg-slate-700'}`}
+              className={`h-1.5 transition-all duration-500 rounded-full ${i === current ? 'w-12 bg-cyan-500 shadow-[0_0_10px_rgba(6,182,212,0.5)]' : 'w-3 bg-slate-800 hover:bg-slate-700'}`}
+              title={`Slide ${i + 1}`}
             />
           ))}
         </div>
@@ -184,17 +228,17 @@ const Presentation: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           <button 
             disabled={current === 0}
             onClick={() => setCurrent(p => p - 1)}
-            className="group flex items-center gap-2 px-6 py-3 bg-slate-900 hover:bg-slate-800 disabled:opacity-20 border border-slate-800 rounded-xl text-white transition-all"
+            className="group flex items-center gap-2 px-6 py-3 bg-slate-900 hover:bg-slate-800 disabled:opacity-20 border border-slate-800 rounded-xl text-white transition-all active:scale-95"
           >
             <svg className="w-4 h-4 group-hover:-translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M15 19l-7-7 7-7" /></svg>
-            <span className="text-[10px] font-black uppercase hidden md:inline">Previous</span>
+            <span className="text-[10px] font-black uppercase hidden sm:inline">Prev</span>
           </button>
           <button 
             disabled={current === slides.length - 1}
             onClick={() => setCurrent(p => p + 1)}
-            className="group flex items-center gap-2 px-8 py-3 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-20 border border-cyan-400/50 rounded-xl text-white transition-all shadow-xl shadow-cyan-500/20"
+            className="group flex items-center gap-2 px-8 py-3 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-20 border border-cyan-400/50 rounded-xl text-white transition-all shadow-xl shadow-cyan-500/20 active:scale-95"
           >
-            <span className="text-[10px] font-black uppercase hidden md:inline">Next_Chapter</span>
+            <span className="text-[10px] font-black uppercase hidden sm:inline">Continue</span>
             <svg className="w-4 h-4 group-hover:translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M9 5l7 7-7 7" /></svg>
           </button>
         </div>
