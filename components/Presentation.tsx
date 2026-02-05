@@ -35,8 +35,8 @@ const slides: Slide[] = [
     tech: ["Strava API", "Automation"],
     // Referencing two images. Update these paths to your local ones if needed (e.g., ["./components/images/image1.jpg", "./components/images/image2.jpg"])
     images: [
-      "https://images.unsplash.com/photo-1517430816045-df4b7de11d1d?auto=format&fit=crop&q=80&w=800",
-      "https://images.unsplash.com/photo-1512446813985-4a0eb173b7a6?auto=format&fit=crop&q=80&w=800"
+      "./components/Athelte_Intelligence_Strava.jpg",
+      "./components/Athelte_Intelligence_Strava_2.jpg"
     ]
   },
   {
