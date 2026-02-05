@@ -6,7 +6,7 @@ import { StravAILogo } from './Icon';
  * This avoids "Invalid URL" errors from new URL() in environments with restricted import.meta support.
  */
 const stravaImg1 = './Athelte_Intelligence_Strava.jpg';
-const stravaImg2 = './Athelte_Intelligence_Strava.jpg';
+const stravaImg2 = './Athelte_Intelligence_Strava_2.jpg';
 
 interface Slide {
   title: string;
