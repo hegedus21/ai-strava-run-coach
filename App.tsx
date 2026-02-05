@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import React from 'react';
 import { StravAILogo } from './components/Icon';
+import Presentation from './components/Presentation';
 
 type ValidationError = { [key: string]: string };
 
@@ -9,6 +10,7 @@ const App: React.FC = () => {
   const [backendSecret, setBackendSecret] = useState<string>(localStorage.getItem('stravai_backend_secret') || '');
   const [activeTab, setActiveTab] = useState<'LOGS' | 'DIAGNOSTICS'>('LOGS');
   const [showSetup, setShowSetup] = useState(!backendUrl || !backendSecret);
+  const [showStory, setShowStory] = useState(false);
   
   const [crName, setCrName] = useState('');
   const [crDate, setCrDate] = useState('');
@@ -174,14 +176,17 @@ const App: React.FC = () => {
           <div>
             <h1 className="text-white font-black uppercase text-sm flex items-center gap-2">
               StravAI_Command
-              <span className="text-[10px] text-cyan-500 font-bold border border-cyan-500/20 px-1.5 rounded">v1.3.0_ULTRA_STABLE</span>
+              <span className="text-[10px] text-cyan-500 font-bold border border-cyan-500/20 px-1.5 rounded">v1.4.0_ZERO_TRUST</span>
             </h1>
             <div className={`text-[9px] uppercase font-bold tracking-widest mt-0.5 ${backendStatus === 'ONLINE' ? 'text-cyan-400' : 'text-red-500 animate-pulse'}`}>
               {backendStatus}
             </div>
           </div>
         </div>
-        <button onClick={() => setShowSetup(true)} className="px-3 py-1.5 bg-slate-800 border border-slate-700 rounded uppercase font-bold text-[10px] hover:bg-slate-700 transition-colors">Config</button>
+        <div className="flex gap-2">
+          <button onClick={() => setShowStory(true)} className="px-3 py-1.5 bg-cyan-900/20 border border-cyan-500/20 rounded uppercase font-bold text-[10px] text-cyan-400 hover:bg-cyan-900/40 transition-colors">Project_Story</button>
+          <button onClick={() => setShowSetup(true)} className="px-3 py-1.5 bg-slate-800 border border-slate-700 rounded uppercase font-bold text-[10px] hover:bg-slate-700 transition-colors">Config</button>
+        </div>
       </header>
 
       <div className="flex-grow flex flex-col md:flex-row min-h-0">
@@ -349,6 +354,8 @@ const App: React.FC = () => {
           </div>
         </div>
       )}
+
+      {showStory && <Presentation onClose={() => setShowStory(false)} />}
     </div>
   );
 };
