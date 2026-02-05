@@ -33,8 +33,16 @@ const App: React.FC = () => {
   const securedFetch = useCallback(async (url: string, options: RequestInit = {}) => {
     const headers = new Headers(options.headers || {});
     headers.set('X-StravAI-Secret', backendSecret);
-    return fetch(url, { ...options, headers });
-  }, [backendSecret]);
+    const response = await fetch(url, { ...options, headers });
+    
+    if (response.status === 401) {
+        addLocalLog("SECURITY_ALERT: Session Unauthorized. Please re-enter credentials.", "error");
+        setBackendStatus('UNAUTHORIZED');
+        setShowSetup(true);
+    }
+    
+    return response;
+  }, [backendSecret, addLocalLog]);
 
   const checkBackend = useCallback(async () => {
     if (!backendUrl) return;
@@ -42,15 +50,20 @@ const App: React.FC = () => {
     try {
       const res = await fetch(`${cleanUrl}/health`);
       if (res.ok) {
-        setBackendStatus('ONLINE');
         const logsRes = await securedFetch(`${cleanUrl}/logs`);
-        if (logsRes.status === 401) setBackendStatus('UNAUTHORIZED');
-        else if (logsRes.ok) {
+        if (logsRes.ok) {
+            setBackendStatus('ONLINE');
             const newLogs = await logsRes.json();
             if (Array.isArray(newLogs)) setBackendLogs(newLogs);
+        } else if (logsRes.status === 401) {
+            setBackendStatus('UNAUTHORIZED');
         }
-      } else { setBackendStatus('OFFLINE'); }
-    } catch { setBackendStatus('OFFLINE'); }
+      } else { 
+        setBackendStatus('OFFLINE'); 
+      }
+    } catch { 
+      setBackendStatus('OFFLINE'); 
+    }
   }, [backendUrl, securedFetch]);
 
   const validateCustomRace = () => {
@@ -71,12 +84,11 @@ const App: React.FC = () => {
 
   const handleSync = async (type: 'SEASON' | 'CUSTOM' | 'BATCH' | 'ID') => {
     if (backendStatus !== 'ONLINE') {
-        addLocalLog("COMMAND_FAILED: Backend is offline.", "error");
+        addLocalLog("COMMAND_FAILED: Backend is offline or unauthorized.", "error");
         return;
     }
     if (isProcessing) return;
 
-    // Clear specific errors before validation
     setValidationErrors({});
 
     if (type === 'CUSTOM' && !validateCustomRace()) {
@@ -164,7 +176,7 @@ const App: React.FC = () => {
               StravAI_Command
               <span className="text-[10px] text-cyan-500 font-bold border border-cyan-500/20 px-1.5 rounded">v1.3.0_ULTRA_STABLE</span>
             </h1>
-            <div className={`text-[9px] uppercase font-bold tracking-widest mt-0.5 ${backendStatus === 'ONLINE' ? 'text-cyan-400' : 'text-red-500'}`}>
+            <div className={`text-[9px] uppercase font-bold tracking-widest mt-0.5 ${backendStatus === 'ONLINE' ? 'text-cyan-400' : 'text-red-500 animate-pulse'}`}>
               {backendStatus}
             </div>
           </div>
@@ -329,13 +341,11 @@ const App: React.FC = () => {
                 Establish_Connection
             </button>
             
-            {(!backendUrl || !backendSecret) && (
-                <div className="p-3 bg-red-900/10 border border-red-900/20 rounded-lg">
-                    <p className="text-[9px] text-red-500/80 uppercase leading-normal">
-                        Note: Credentials are stored locally in your browser. Ensure the Gateway URL points to an active StravAI Backend instance.
-                    </p>
-                </div>
-            )}
+            <div className="p-3 bg-slate-800/50 border border-slate-700 rounded-lg">
+                <p className="text-[9px] text-slate-500 uppercase leading-normal">
+                    SECURITY NOTICE: Your secret must match the <code className="text-cyan-400">BACKEND_SECRET</code> set on your hosting provider.
+                </p>
+            </div>
           </div>
         </div>
       )}
