@@ -2,7 +2,7 @@
   "name": "StravAI Coach",
   "version": "1.4.0-zero-trust",
   "release_state": "Hardened Production Grade",
-  "description": "Enterprise-grade security update featuring Zero Trust middleware, separated webhook verification, and automated session invalidation.",
+  "description": "Enterprise-grade security update featuring an interactive Project Story module and Zero Trust middleware.",
   "requestFramePermissions": [
     "geolocation"
   ]
