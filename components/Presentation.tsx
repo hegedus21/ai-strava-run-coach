@@ -2,11 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { StravAILogo } from './Icon';
 
 /** 
- * Asset resolution using root-relative string paths.
- * This avoids "Invalid URL" errors from new URL() in environments with restricted import.meta support.
+ * Importing assets directly allows Vite to process them, 
+ * providing correct hashed URLs for production and handling 
+ * base paths (like GitHub Pages sub-folders) automatically.
  */
-const stravaImg1 = './Athelte_Intelligence_Strava.jpg';
-const stravaImg2 = './Athelte_Intelligence_Strava_2.jpg';
+import stravaImg1 from './Athelte_Intelligence_Strava.jpg';
+import stravaImg2 from './Athelte_Intelligence_Strava_2.jpg';
 
 interface Slide {
   title: string;
@@ -122,7 +123,6 @@ const Presentation: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
-      // Priority: Close lightbox first if open
       if (lightboxImage) {
         if (e.key === 'Escape') setLightboxImage(null);
         return;
@@ -141,16 +141,15 @@ const Presentation: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   return (
     <div className="fixed inset-0 z-[200] bg-slate-950/98 backdrop-blur-3xl flex flex-col font-mono overflow-hidden">
       
-      {/* --- Lightbox Implementation --- */}
+      {/* Lightbox */}
       {lightboxImage && (
         <div 
-          className="fixed inset-0 z-[300] bg-black/90 flex items-center justify-center p-4 md:p-12 animate-in fade-in duration-300 backdrop-blur-sm"
+          className="fixed inset-0 z-[300] bg-black/95 flex items-center justify-center p-4 md:p-12 animate-in fade-in duration-300 backdrop-blur-md"
           onClick={() => setLightboxImage(null)}
         >
           <div className="relative max-w-7xl w-full h-full flex items-center justify-center group/lb">
-            {/* Close Button UI */}
             <button 
-              className="absolute top-0 right-0 md:-top-12 md:-right-4 p-3 bg-slate-800/80 hover:bg-cyan-600 text-white rounded-full transition-all z-[310] flex items-center gap-2 shadow-xl border border-slate-700 hover:scale-110"
+              className="absolute top-0 right-0 md:-top-12 md:-right-4 p-3 bg-slate-800/80 hover:bg-cyan-600 text-white rounded-full transition-all z-[310] flex items-center gap-2 shadow-xl border border-slate-700"
               onClick={(e) => { e.stopPropagation(); setLightboxImage(null); }}
             >
               <span className="text-[10px] font-bold uppercase tracking-widest hidden md:inline ml-2">Close_X</span>
@@ -158,19 +157,12 @@ const Presentation: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
               </svg>
             </button>
-            
-            {/* The Image */}
             <img 
               src={lightboxImage} 
               alt="Expanded view" 
               className="max-w-full max-h-full object-contain shadow-2xl rounded-xl border border-white/10 animate-in zoom-in-95 duration-300"
               onClick={(e) => e.stopPropagation()}
             />
-
-            {/* Hint */}
-            <div className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-8 text-slate-500 text-[9px] uppercase font-bold tracking-[0.3em] opacity-0 group-hover/lb:opacity-100 transition-opacity">
-              Esc_to_Dismiss
-            </div>
           </div>
         </div>
       )}
@@ -188,7 +180,6 @@ const Presentation: React.FC<{ onClose: () => void }> = ({ onClose }) => {
       <div className="flex-grow flex items-center justify-center p-6 md:p-12 overflow-y-auto">
         <div className="max-w-6xl w-full grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
           
-          {/* Left Column: Text Content */}
           <div className="lg:col-span-7 space-y-8 order-2 lg:order-1">
             <div className="space-y-4">
               <div className="inline-block px-3 py-1 bg-cyan-900/30 border border-cyan-500/20 text-cyan-400 text-[10px] font-black rounded uppercase tracking-widest">
@@ -225,46 +216,29 @@ const Presentation: React.FC<{ onClose: () => void }> = ({ onClose }) => {
             )}
           </div>
 
-          {/* Right Column: Visual/Image */}
           <div className="lg:col-span-5 order-1 lg:order-2">
             <div className={`grid gap-4 w-full h-full min-h-[350px] ${s.images && s.images.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
               {s.images && s.images.length > 0 ? (
                 s.images.map((img, idx) => (
                   <div 
                     key={idx} 
-                    className="relative aspect-[4/5] rounded-3xl overflow-hidden border border-slate-800 group shadow-2xl shadow-cyan-500/5 bg-slate-900 cursor-zoom-in active:scale-95 transition-all hover:border-cyan-500/30"
+                    className="relative aspect-[4/5] rounded-3xl overflow-hidden border border-slate-800 group shadow-2xl shadow-cyan-500/5 bg-slate-900 cursor-zoom-in transition-all hover:border-cyan-500/30"
                     onClick={() => setLightboxImage(img)}
                   >
                     <img 
                       src={img} 
                       alt={`${s.title} ${idx + 1}`} 
-                      className="w-full h-full object-cover grayscale opacity-60 group-hover:grayscale-0 group-hover:opacity-100 transition-all duration-1000 scale-105 group-hover:scale-100" 
+                      className="w-full h-full object-cover grayscale opacity-60 group-hover:grayscale-0 group-hover:opacity-100 transition-all duration-1000" 
                       onError={(e) => {
                         (e.target as HTMLImageElement).style.display = 'none';
                         const parent = (e.target as HTMLImageElement).parentElement;
                         if (parent) {
                           parent.classList.add('flex', 'items-center', 'justify-center');
-                          parent.innerHTML = `<div class="flex flex-col items-center gap-2 opacity-20"><svg class="w-12 h-12 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg><span class="text-[8px] uppercase">Asset_Not_Found</span></div>`;
+                          parent.innerHTML = `<div class="flex flex-col items-center gap-2 opacity-20"><svg class="w-12 h-12 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg><span class="text-[8px] uppercase">Missing_Asset</span></div>`;
                         }
                       }}
                     />
                     <div className="absolute inset-0 bg-gradient-to-t from-slate-950/90 via-transparent to-transparent opacity-80 pointer-events-none"></div>
-                    
-                    {/* Expand Hint */}
-                    <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                      <div className="bg-cyan-500/40 backdrop-blur-md border border-cyan-400/50 p-4 rounded-full scale-50 group-hover:scale-100 transition-transform duration-500">
-                        <svg className="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7" />
-                        </svg>
-                      </div>
-                    </div>
-
-                    <div className="absolute bottom-4 left-4 right-4 pointer-events-none">
-                      <div className="bg-slate-900/60 backdrop-blur-md border border-slate-700/30 p-2 rounded-lg flex justify-between items-center">
-                        <span className="text-[7px] text-cyan-500 font-black uppercase tracking-widest">EXPAND_PREVIEW</span>
-                        <div className="w-1.5 h-1.5 bg-cyan-500 rounded-full animate-pulse"></div>
-                      </div>
-                    </div>
                   </div>
                 ))
               ) : (
@@ -277,15 +251,13 @@ const Presentation: React.FC<{ onClose: () => void }> = ({ onClose }) => {
         </div>
       </div>
 
-      {/* Navigation Footer */}
       <div className="p-8 flex justify-between items-center border-t border-slate-800 bg-slate-900/50 backdrop-blur-md shrink-0">
         <div className="flex gap-2">
           {slides.map((_, i) => (
             <button 
               key={i} 
               onClick={() => setCurrent(i)}
-              className={`h-1.5 transition-all duration-500 rounded-full ${i === current ? 'w-12 bg-cyan-500 shadow-[0_0_10px_rgba(6,182,212,0.5)]' : 'w-3 bg-slate-800 hover:bg-slate-700'}`}
-              title={`Slide ${i + 1}`}
+              className={`h-1.5 transition-all duration-500 rounded-full ${i === current ? 'w-12 bg-cyan-500' : 'w-3 bg-slate-800 hover:bg-slate-700'}`}
             />
           ))}
         </div>
@@ -293,18 +265,16 @@ const Presentation: React.FC<{ onClose: () => void }> = ({ onClose }) => {
           <button 
             disabled={current === 0}
             onClick={() => setCurrent(p => p - 1)}
-            className="group flex items-center gap-2 px-6 py-3 bg-slate-900 hover:bg-slate-800 disabled:opacity-20 border border-slate-800 rounded-xl text-white transition-all active:scale-95"
+            className="group flex items-center gap-2 px-6 py-3 bg-slate-900 border border-slate-800 rounded-xl text-white disabled:opacity-20"
           >
-            <svg className="w-4 h-4 group-hover:-translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M15 19l-7-7 7-7" /></svg>
-            <span className="text-[10px] font-black uppercase hidden sm:inline">Prev</span>
+            <span className="text-[10px] font-black uppercase">Prev</span>
           </button>
           <button 
             disabled={current === slides.length - 1}
             onClick={() => setCurrent(p => p + 1)}
-            className="group flex items-center gap-2 px-8 py-3 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-20 border border-cyan-400/50 rounded-xl text-white transition-all shadow-xl shadow-cyan-500/20 active:scale-95"
+            className="group flex items-center gap-2 px-8 py-3 bg-cyan-600 rounded-xl text-white disabled:opacity-20 shadow-xl shadow-cyan-500/20"
           >
-            <span className="text-[10px] font-black uppercase hidden sm:inline">Continue</span>
-            <svg className="w-4 h-4 group-hover:translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M9 5l7 7-7 7" /></svg>
+            <span className="text-[10px] font-black uppercase">Next</span>
           </button>
         </div>
       </div>
