@@ -18,6 +18,7 @@ const garminCoach2 = './images/Garmin_coach_2.jpg';
 const aIStudio = './images/AIStudio.jpg';
 const koyeb = './images/Koyeb.jpg';
 const stravaAIUI = './images/StravaAIUI.jpg';
+const aiForgets = './images/AIForgets.jpg';
 
 interface Slide {
   title: string;
