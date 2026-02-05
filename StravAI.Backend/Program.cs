@@ -81,13 +81,41 @@ string CompactSummarize(List<JsonElement> activities) {
     return sb.ToString();
 }
 
+// --- Security Middleware (For UI Commands) ---
+app.Use(async (context, next) => {
+    var path = context.Request.Path.Value ?? "";
+    
+    // PUBLIC EXEMPTIONS
+    if (path == "/" || path == "/health" || path.StartsWith("/webhook")) {
+        await next();
+        return;
+    }
+
+    // Command routes (/logs, /sync, etc) require BACKEND_SECRET
+    var expectedSecret = GetEnv("BACKEND_SECRET");
+    if (string.IsNullOrEmpty(expectedSecret)) expectedSecret = GetEnv("STRAVA_VERIFY_TOKEN"); // Fallback
+
+    if (string.IsNullOrEmpty(expectedSecret)) {
+        context.Response.StatusCode = 500;
+        await context.Response.WriteAsync("SERVER_ERROR: Auth credentials not configured on host.");
+        return;
+    }
+
+    if (!context.Request.Headers.TryGetValue("X-StravAI-Secret", out var receivedSecret) || receivedSecret != expectedSecret) {
+        context.Response.StatusCode = 401;
+        await context.Response.WriteAsync("UNAUTHORIZED: Invalid access token.");
+        return;
+    }
+
+    await next();
+});
+
 // --- Routes ---
 
-app.MapGet("/", () => "StravAI Engine v1.2.3_ULTRA is Online.");
-app.MapGet("/health", () => Results.Ok(new { status = "healthy", version = "1.2.3_ULTRA" }));
+app.MapGet("/", () => "StravAI Engine v1.3.0_ULTRA_STABLE is Online.");
+app.MapGet("/health", () => Results.Ok(new { status = "healthy", version = "1.3.0_ULTRA_STABLE" }));
 app.MapGet("/logs", () => Results.Ok(logs.ToArray()));
 
-// Batch Sync: Processes recent activities but skips analyzed ones
 app.MapPost("/sync", (IHttpClientFactory clientFactory) => {
     AddLog("AUTH_ACTION: Starting Intelligent Batch Sync...");
     _ = Task.Run(async () => {
@@ -108,7 +136,6 @@ app.MapPost("/sync", (IHttpClientFactory clientFactory) => {
     return Results.Accepted();
 });
 
-// Single ID Sync: Forces re-analysis of a specific activity
 app.MapPost("/sync/{id}", (long id, IHttpClientFactory clientFactory) => {
     AddLog($"AUTH_ACTION: Manual Override for Activity {id}.");
     _ = Task.Run(() => ProcessActivityAsync(id, clientFactory, GetEnv, AddLog, GetCetTimestamp, true));
@@ -127,8 +154,26 @@ app.MapPost("/sync/season", (IHttpClientFactory clientFactory) => {
     return Results.Accepted();
 });
 
+// --- WEBHOOK HANDLERS ---
+
+// Strava Handshake (Challenge)
+app.MapGet("/webhook", ([FromQuery(Name = "hub.mode")] string mode, [FromQuery(Name = "hub.challenge")] string challenge, [FromQuery(Name = "hub.verify_token")] string verifyToken) => {
+    var expectedToken = GetEnv("STRAVA_VERIFY_TOKEN");
+    if (string.IsNullOrEmpty(expectedToken)) expectedToken = GetEnv("BACKEND_SECRET"); // Fallback
+
+    if (mode == "subscribe" && verifyToken == expectedToken) {
+        AddLog("WEBHOOK_INIT: Strava Verification Handshake Successful.");
+        return Results.Ok(new { hub_challenge = challenge });
+    }
+    
+    AddLog($"WEBHOOK_INIT_FAILED: Token Mismatch (Received: {verifyToken}).", "ERROR");
+    return Results.Unauthorized();
+});
+
+// Strava Event Intake
 app.MapPost("/webhook", ([FromBody] StravaWebhookEvent @event, IHttpClientFactory clientFactory) => {
     if (@event.ObjectType == "activity") {
+        AddLog($"WEBHOOK_EVENT: New Activity detected (ID: {@event.ObjectId}). Queueing for analysis.");
         _ = Task.Run(() => ProcessActivityAsync(@event.ObjectId, clientFactory, GetEnv, AddLog, GetCetTimestamp));
     }
     return Results.Ok();
