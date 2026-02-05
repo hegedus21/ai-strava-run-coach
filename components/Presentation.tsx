@@ -124,7 +124,7 @@ const slides: Slide[] = [
       "Managing context windows is critical to prevent the coach from losing the long-term roadmap."
     ],
     tech: ["Context Management", "AI Alignment"],
-    images: ["https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?auto=format&fit=crop&q=80&w=800"]
+    images: [aiForgets]
   }
 ];
 
