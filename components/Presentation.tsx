@@ -2,12 +2,12 @@ import React, { useState, useEffect } from 'react';
 import { StravAILogo } from './Icon';
 
 /** 
- * Importing assets directly allows Vite to process them, 
- * providing correct hashed URLs for production and handling 
- * base paths (like GitHub Pages sub-folders) automatically.
+ * Use string paths relative to the index.html location.
+ * In a native ESM browser environment, imports for images are not supported.
+ * We point to the 'components' folder where these assets are conceptually stored.
  */
-import stravaImg1 from './Athelte_Intelligence_Strava.jpg';
-import stravaImg2 from './Athelte_Intelligence_Strava_2.jpg';
+const stravaImg1 = 'components/Athelte_Intelligence_Strava.jpg';
+const stravaImg2 = 'components/Athelte_Intelligence_Strava_2.jpg';
 
 interface Slide {
   title: string;
