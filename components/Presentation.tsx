@@ -1,6 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { StravAILogo } from './Icon';
 
+// Importing local assets so Vite can resolve the paths correctly
+import stravaImg1 from './Athelte_Intelligence_Strava.jpg';
+import stravaImg2 from './Athelte_Intelligence_Strava_2.jpg';
+
 interface Slide {
   title: string;
   subtitle: string;
@@ -33,11 +37,8 @@ const slides: Slide[] = [
       "The friction of manual exports led to one conclusion: I needed a direct API bridge to the AI coach."
     ],
     tech: ["API Integration", "Automation"],
-    // These paths now match your exact filenames in the components folder
-    images: [
-      "./components/Athelte_Intelligence_Strava.jpg",
-      "./components/Athelte_Intelligence_Strava_2.jpg"
-    ]
+    // Using the imported image variables here
+    images: [stravaImg1, stravaImg2]
   },
   {
     tag: "03_RESEARCH",
@@ -191,7 +192,7 @@ const Presentation: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                       alt={`${s.title} ${idx + 1}`} 
                       className="w-full h-full object-cover grayscale opacity-60 group-hover:grayscale-0 group-hover:opacity-100 transition-all duration-1000 scale-105 group-hover:scale-100" 
                       onError={(e) => {
-                        // Clean fallback for missing local files
+                        // Clean fallback for missing assets
                         (e.target as HTMLImageElement).style.display = 'none';
                         const parent = (e.target as HTMLImageElement).parentElement;
                         if (parent) {
