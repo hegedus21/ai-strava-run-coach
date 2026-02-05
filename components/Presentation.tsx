@@ -15,6 +15,9 @@ const stravaReport = './images/Strava.jpg';
 const stravaActivity = './images/StravaAI.jpg';
 const garminCoach1 = './images/Garmin_coach_1.jpg';
 const garminCoach2 = './images/Garmin_coach_2.jpg';
+const aIStudio = './images/AIStudio.jpg';
+const koyeb = './images/Koyeb.jpg';
+const stravaAIUI = './images/StravaAIUI.jpg';
 
 interface Slide {
   title: string;
@@ -72,7 +75,7 @@ const slides: Slide[] = [
       "Within hours, we moved from an abstract idea to a working cloud-native engine."
     ],
     tech: ["Google AI Studio", "Rapid PoC"],
-    images: ["https://images.unsplash.com/photo-1587620962725-abab7fe55159?auto=format&fit=crop&q=80&w=800"]
+    images: [stravaAIUI]
   },
   {
     tag: "05_EVOLUTION",
@@ -84,7 +87,7 @@ const slides: Slide[] = [
       "AI guided the entire setup of secure token management and the Zero Trust security model."
     ],
     tech: ["Koyeb", "GitHub Actions", "Cloud Native"],
-    images: ["https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&q=80&w=800"]
+    images: [koyeb]
   },
   {
     tag: "06_RECIPROCITY",
@@ -96,7 +99,7 @@ const slides: Slide[] = [
       "Leveraging Gemini Flash for high-speed, cost-effective reasoning."
     ],
     tech: ["Gemini 3 Flash", "Neural Logic"],
-    images: [stravaActivity]
+    images: [aIStudio]
   },
   {
     tag: "07_BENEFITS",
@@ -108,7 +111,7 @@ const slides: Slide[] = [
       "Scalable architecture that treats every run as a data point for a larger season strategy."
     ],
     tech: ["Velocity", "Efficiency"],
-    images: ["https://images.unsplash.com/photo-1461896756913-647eecc9a29e?auto=format&fit=crop&q=80&w=800"]
+    images: [stravaActivity]
   },
   {
     tag: "08_REFLECTIONS",
