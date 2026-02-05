@@ -21,7 +21,7 @@ const slides: Slide[] = [
       "Engineered for the data-driven athlete who wants more than just a summary."
     ],
     tech: [".NET 9", "Minimal API", "Strava API"],
-    images: ["./components/images/intro.jpg"]
+    images: ["https://images.unsplash.com/photo-1476480862126-209bfaa8edc8?auto=format&fit=crop&q=80&w=800"]
   },
   {
     tag: "02_WHY",
@@ -33,6 +33,7 @@ const slides: Slide[] = [
       "The friction of manual exports led to one conclusion: I needed a direct API bridge to the AI coach."
     ],
     tech: ["API Integration", "Automation"],
+    // These paths now match your exact filenames in the components folder
     images: [
       "./components/Athelte_Intelligence_Strava.jpg",
       "./components/Athelte_Intelligence_Strava_2.jpg"
@@ -48,7 +49,7 @@ const slides: Slide[] = [
       "Our focus: Personalized race-day nutrition, pace plans, and 'Readiness %' based on long-term data."
     ],
     tech: ["Competitive Analysis", "Strategy"],
-    images: ["./components/images/market_gap.jpg"]
+    images: ["https://images.unsplash.com/photo-1551288049-bbbda536339a?auto=format&fit=crop&q=80&w=800"]
   },
   {
     tag: "04_GENESIS",
@@ -60,7 +61,7 @@ const slides: Slide[] = [
       "Within hours, we moved from an abstract idea to a working cloud-native engine."
     ],
     tech: ["Google AI Studio", "Rapid PoC"],
-    images: ["./components/images/first_build.jpg"]
+    images: ["https://images.unsplash.com/photo-1587620962725-abab7fe55159?auto=format&fit=crop&q=80&w=800"]
   },
   {
     tag: "05_EVOLUTION",
@@ -72,7 +73,7 @@ const slides: Slide[] = [
       "AI guided the entire setup of secure token management and the Zero Trust security model."
     ],
     tech: ["Koyeb", "GitHub Actions", "Cloud Native"],
-    images: ["./components/images/infrastructure.jpg"]
+    images: ["https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&q=80&w=800"]
   },
   {
     tag: "06_RECIPROCITY",
@@ -84,7 +85,7 @@ const slides: Slide[] = [
       "Leveraging Gemini Flash for high-speed, cost-effective reasoning."
     ],
     tech: ["Gemini 3 Flash", "Neural Logic"],
-    images: ["./components/images/recursive_ai.jpg"]
+    images: ["https://images.unsplash.com/photo-1677442136019-21780ecad995?auto=format&fit=crop&q=80&w=800"]
   },
   {
     tag: "07_BENEFITS",
@@ -96,7 +97,7 @@ const slides: Slide[] = [
       "Scalable architecture that treats every run as a data point for a larger season strategy."
     ],
     tech: ["Velocity", "Efficiency"],
-    images: ["./components/images/success.jpg"]
+    images: ["https://images.unsplash.com/photo-1461896756913-647eecc9a29e?auto=format&fit=crop&q=80&w=800"]
   },
   {
     tag: "08_REFLECTIONS",
@@ -108,7 +109,7 @@ const slides: Slide[] = [
       "Managing context windows is critical to prevent the coach from losing the long-term roadmap."
     ],
     tech: ["Context Management", "AI Alignment"],
-    images: ["./components/images/challenges.jpg"]
+    images: ["https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?auto=format&fit=crop&q=80&w=800"]
   }
 ];
 
@@ -190,7 +191,7 @@ const Presentation: React.FC<{ onClose: () => void }> = ({ onClose }) => {
                       alt={`${s.title} ${idx + 1}`} 
                       className="w-full h-full object-cover grayscale opacity-60 group-hover:grayscale-0 group-hover:opacity-100 transition-all duration-1000 scale-105 group-hover:scale-100" 
                       onError={(e) => {
-                        // Fallback icon if image doesn't exist yet
+                        // Clean fallback for missing local files
                         (e.target as HTMLImageElement).style.display = 'none';
                         const parent = (e.target as HTMLImageElement).parentElement;
                         if (parent) {
