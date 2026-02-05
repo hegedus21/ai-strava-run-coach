@@ -147,8 +147,8 @@ const App: React.FC = () => {
     }
   }, [backendUrl, checkBackend]);
 
-  const getInputClass = (errorKey: string) => {
-    const base = "w-full bg-slate-900 border rounded-lg px-3 py-2 text-cyan-400 outline-none text-xs transition-all";
+  const getInputClass = (errorKey: string, extraClass: string = "") => {
+    const base = `w-full bg-slate-900 border rounded-lg px-3 py-2 text-cyan-400 outline-none text-xs transition-all ${extraClass}`;
     return validationErrors[errorKey] 
         ? `${base} border-red-500 shadow-[0_0_8px_rgba(239,68,68,0.4)] animate-pulse` 
         : `${base} border-slate-800 focus:border-cyan-500/50`;
@@ -176,8 +176,8 @@ const App: React.FC = () => {
         <aside className="w-full md:w-80 border-r border-slate-800 bg-slate-900/40 p-6 space-y-8 overflow-y-auto">
           <section className="space-y-4">
             <h2 className="text-[9px] font-black text-slate-500 uppercase tracking-widest flex justify-between">
-              Race_Deployment
-              {Object.keys(validationErrors).some(k => k.startsWith('cr')) && <span className="text-red-500 animate-pulse">! REQUIRED_FIELDS_MISSING</span>}
+              CREATE RACE SPECIFIC ANALYSIS
+              {Object.keys(validationErrors).some(k => k.startsWith('cr')) && <span className="text-red-500 animate-pulse">! MISSING</span>}
             </h2>
             <div className="p-4 bg-slate-950 border border-slate-800 rounded-xl space-y-3 shadow-xl">
                <div>
@@ -195,12 +195,13 @@ const App: React.FC = () => {
                  <div className="w-1/2">
                    <input 
                     type="text" 
-                    placeholder="DATE (YYYY-MM-DD)" 
+                    placeholder="YYYY-MM-DD" 
                     value={crDate} 
                     onChange={e=>{setCrDate(e.target.value); setValidationErrors(p => ({...p, crDate: ''}))}} 
-                    className={getInputClass('crDate')}
+                    className={getInputClass('crDate', "placeholder:text-[9px]")}
                    />
-                   {validationErrors.crDate && <p className="text-[8px] text-red-500 mt-1 uppercase font-bold">REQUIRED</p>}
+                   <p className="text-[8px] text-slate-600 mt-1 uppercase font-bold">DATE (YYYY-MM-DD)</p>
+                   {validationErrors.crDate && <p className="text-[8px] text-red-500 uppercase font-bold">REQUIRED</p>}
                  </div>
                  <div className="w-1/2">
                    <input 
@@ -208,9 +209,10 @@ const App: React.FC = () => {
                     placeholder="GOAL TIME" 
                     value={crTarget} 
                     onChange={e=>{setCrTarget(e.target.value); setValidationErrors(p => ({...p, crTarget: ''}))}} 
-                    className={getInputClass('crTarget')}
+                    className={getInputClass('crTarget', "placeholder:text-[9px]")}
                    />
-                   {validationErrors.crTarget && <p className="text-[8px] text-red-500 mt-1 uppercase font-bold">REQUIRED</p>}
+                   <p className="text-[8px] text-slate-600 mt-1 uppercase font-bold">GOAL TIME</p>
+                   {validationErrors.crTarget && <p className="text-[8px] text-red-500 uppercase font-bold">REQUIRED</p>}
                  </div>
                </div>
 
@@ -227,7 +229,7 @@ const App: React.FC = () => {
                 disabled={!!isProcessing} 
                 className={`w-full py-3 rounded-lg border font-black uppercase text-[10px] tracking-widest transition-all ${isProcessing === 'CUSTOM' ? 'bg-cyan-900/40 text-cyan-200 border-cyan-500/40 cursor-wait' : 'bg-cyan-900/20 text-cyan-400 border-cyan-500/20 hover:bg-cyan-900/30'}`}
                >
-                {isProcessing === 'CUSTOM' ? 'Analyzing...' : 'Deploy_Analysis'}
+                {isProcessing === 'CUSTOM' ? 'Analyzing...' : 'ANALYSE'}
                </button>
             </div>
           </section>
@@ -235,13 +237,13 @@ const App: React.FC = () => {
           <section className="space-y-4">
             <h2 className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Operations</h2>
             <div className="space-y-2">
-               <button onClick={() => handleSync('SEASON')} className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-slate-400 rounded-lg border border-slate-800 text-[9px] uppercase font-black transition-all">Season_Update</button>
-               <button onClick={() => handleSync('BATCH')} className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-slate-400 rounded-lg border border-slate-800 text-[9px] uppercase font-black transition-all">Batch_Sync_Recent</button>
+               <button onClick={() => handleSync('SEASON')} className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-slate-400 rounded-lg border border-slate-800 text-[9px] uppercase font-black transition-all">ANALYSE MAIN RACE</button>
+               <button onClick={() => handleSync('BATCH')} className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-slate-400 rounded-lg border border-slate-800 text-[9px] uppercase font-black transition-all">ANALYSE RECENT ACTIVITIES</button>
             </div>
           </section>
 
           <section className="space-y-4">
-            <h2 className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Manual_Override</h2>
+            <h2 className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Analyse Specific Activity</h2>
             <div className="space-y-1">
                 <div className="flex gap-2">
                   <input 
