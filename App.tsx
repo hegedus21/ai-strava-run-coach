@@ -184,7 +184,7 @@ const App: React.FC = () => {
           </div>
         </div>
         <div className="flex gap-2">
-          <button onClick={() => setShowStory(true)} className="px-3 py-1.5 bg-cyan-900/20 border border-cyan-500/20 rounded uppercase font-bold text-[10px] text-cyan-400 hover:bg-cyan-900/40 transition-colors">Project_Story</button>
+          <button onClick={() => setShowStory(true)} className="px-3 py-1.5 bg-cyan-900/20 border border-cyan-500/20 rounded uppercase font-bold text-[10px] text-cyan-400 hover:bg-cyan-900/40 transition-colors">Story</button>
           <button onClick={() => setShowSetup(true)} className="px-3 py-1.5 bg-slate-800 border border-slate-700 rounded uppercase font-bold text-[10px] hover:bg-slate-700 transition-colors">Config</button>
         </div>
       </header>
