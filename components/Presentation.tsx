@@ -33,10 +33,9 @@ const slides: Slide[] = [
       "The friction of manual exports led to one conclusion: I needed a direct API bridge to the AI coach."
     ],
     tech: ["API Integration", "Automation"],
-    // Referencing your local images in components/images/
     images: [
-      "./components/images/trial_ended.jpg",
-      "./components/images/manual_pain.jpg"
+      "./components/Athelte_Intelligence_Strava.jpg",
+      "./components/Athelte_Intelligence_Strava_2.jpg"
     ]
   },
   {
@@ -160,7 +159,7 @@ const Presentation: React.FC<{ onClose: () => void }> = ({ onClose }) => {
               <div className="space-y-5">
                 {s.content.map((p, i) => (
                   <div key={i} className="flex gap-4 group">
-                    <span className="text-cyan-600 font-bold shrink-0 mt-1">>></span>
+                    <span className="text-cyan-600 font-bold shrink-0 mt-1">{" >> "}</span>
                     <p className="text-slate-300 text-sm md:text-lg leading-relaxed group-hover:text-white transition-colors">
                       {p}
                     </p>
