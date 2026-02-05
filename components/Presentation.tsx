@@ -7,109 +7,109 @@ interface Slide {
   content: string[];
   tech?: string[];
   tag: string;
-  images?: string[]; // Support multiple images
+  images?: string[];
 }
 
 const slides: Slide[] = [
   {
     tag: "01_START",
     title: "STRAVAI COACH",
-    subtitle: "The Project Inception.",
+    subtitle: "The Personal Training Revolution.",
     content: [
-      "Born from a desire to turn raw GPS data into actionable coaching intelligence.",
-      "A bridge between the Strava API and the reasoning power of Gemini 3.",
-      "Developed entirely through AI-human collaboration."
+      "A service built in .NET to bridge the gap between human athletic potential and artificial intelligence.",
+      "Listens to new Strava activities and provides elite-level coaching feedback automatically.",
+      "Engineered for the data-driven athlete who wants more than just a summary."
     ],
-    tech: ["React", ".NET 9", "Gemini 3"],
-    images: ["https://images.unsplash.com/photo-1476480862126-209bfaa8edc8?auto=format&fit=crop&q=80&w=800"]
+    tech: [".NET 9", "Minimal API", "Strava API"],
+    images: ["./components/images/intro.jpg"]
   },
   {
     tag: "02_WHY",
     title: "THE CATALYST",
-    subtitle: "Beyond the Paywall.",
+    subtitle: "Trial Ended, Mission Started.",
     content: [
-      "My Strava Premium trial ended, taking 'Athlete Intelligence' and training suggestions with it.",
-      "I didn't want to pay a subscription for features I could build myself.",
-      "Manual exporting of logs to LLMs was tedious; I needed an automated API-driven solution."
+      "My 30-day Strava Premium trial ended. I lost access to 'Athlete Intelligence' and training suggestions.",
+      "I tried manual prompting in ChatGPT, but sharing fitness levels and history was a massive bottleneck.",
+      "The friction of manual exports led to one conclusion: I needed a direct API bridge to the AI coach."
     ],
-    tech: ["Strava API", "Automation"],
-    // Referencing two images. Update these paths to your local ones if needed (e.g., ["./components/images/image1.jpg", "./components/images/image2.jpg"])
+    tech: ["API Integration", "Automation"],
+    // Referencing your local images in components/images/
     images: [
-      "./components/Athelte_Intelligence_Strava.jpg",
-      "./components/Athelte_Intelligence_Strava_2.jpg"
+      "./components/images/trial_ended.jpg",
+      "./components/images/manual_pain.jpg"
     ]
   },
   {
     tag: "03_RESEARCH",
     title: "MARKET GAP",
-    subtitle: "Scanning 1,000 Activities, Not Just 30.",
+    subtitle: "Identifying the Intelligence Ceiling.",
     content: [
-      "Strava AI is limited to 30 days. Garmin plans only go up to the Half Marathon.",
-      "StravAI scans your entire history (up to 1,000 activities) for true fitness mapping.",
-      "Focus: Race-specific plans, pace strategies (Optimistic/Realistic), and nutrition logic."
+      "Existing tools have limits: Strava AI only scans 30 days. Garmin plans stop at the Half Marathon.",
+      "StravAI scans up to 1,000 activities to build a true multi-season fitness signature.",
+      "Our focus: Personalized race-day nutrition, pace plans, and 'Readiness %' based on long-term data."
     ],
-    tech: ["Big Data", "Fitness Intelligence"],
-    images: ["https://images.unsplash.com/photo-1552674605-db6ffd4facb5?auto=format&fit=crop&q=80&w=800"]
+    tech: ["Competitive Analysis", "Strategy"],
+    images: ["./components/images/market_gap.jpg"]
   },
   {
     tag: "04_GENESIS",
-    title: "THE FIRST SPARK",
-    subtitle: "Google AI Studio as Architect.",
+    title: "RAPID GENESIS",
+    subtitle: "Documentation via AI Studio.",
     content: [
-      "Found the Strava API docs but didn't want to spend weeks studying them.",
-      "Used Google AI Studio to translate my ideas into a working project structure.",
-      "Within hours, the first functional version of the cloud engine was alive."
+      "I found the Strava API docs but didn't want to spend weeks studying the endpoints.",
+      "I used Google AI Studio to translate my high-level logic into a fully structured .NET project.",
+      "Within hours, we moved from an abstract idea to a working cloud-native engine."
     ],
-    tech: ["AI Studio", "Rapid Prototyping"],
-    images: ["https://images.unsplash.com/photo-1677442136019-21780ecad995?auto=format&fit=crop&q=80&w=800"]
+    tech: ["Google AI Studio", "Rapid PoC"],
+    images: ["./components/images/first_build.jpg"]
   },
   {
     tag: "05_EVOLUTION",
-    title: "REFINING THE ENGINE",
-    subtitle: "The 'Everything Free' Architecture.",
+    title: "INFRASTRUCTURE",
+    subtitle: "The Power of the Free Tier.",
     content: [
-      "Criterion: Zero cost. Hosted on Koyeb (Free Tier) with GitHub Actions.",
-      "Evolved from simple activity analysis to deep Custom Race deployments.",
-      "AI guided the setup of tokens, keys, and the Zero Trust security model."
+      "The mission: High-grade coaching with zero running costs.",
+      "Engineered to run on Koyeb's free tier with deployment handled by GitHub Actions.",
+      "AI guided the entire setup of secure token management and the Zero Trust security model."
     ],
-    tech: ["Koyeb", "GitHub Actions", ".NET 9"],
-    images: ["https://images.unsplash.com/photo-1451187580459-43490279c0fa?auto=format&fit=crop&q=80&w=800"]
+    tech: ["Koyeb", "GitHub Actions", "Cloud Native"],
+    images: ["./components/images/infrastructure.jpg"]
   },
   {
-    tag: "06_POWERED_BY_AI",
-    title: "AI INCEPTION",
+    tag: "06_RECIPROCITY",
+    title: "AI SYNERGY",
     subtitle: "Developed by AI, Analyzed by AI.",
     content: [
-      "The code was written by AI. The athletic performance is analyzed by AI.",
-      "Leveraging Gemini Flash (Free Tier) for efficient, high-speed reasoning.",
-      "A recursive cycle of intelligence where the tool improves itself."
+      "A recursive loop: The codebase was written by Gemini. The athlete's fitness is now coached by Gemini.",
+      "By eliminating manual dev work, we reached a stable production state in record time.",
+      "Leveraging Gemini Flash for high-speed, cost-effective reasoning."
     ],
-    tech: ["Gemini 3 Flash", "Neural Analysis"],
-    images: ["https://images.unsplash.com/photo-1620712943543-bcc4628c9757?auto=format&fit=crop&q=80&w=800"]
+    tech: ["Gemini 3 Flash", "Neural Logic"],
+    images: ["./components/images/recursive_ai.jpg"]
   },
   {
-    tag: "07_PROS",
-    title: "THE SUCCESS",
-    subtitle: "Rapid Proof of Concept.",
+    tag: "07_BENEFITS",
+    title: "THE PROS",
+    subtitle: "Velocity and Precision.",
     content: [
-      "Zero documentation study required—the AI understood the API requirements instantly.",
-      "Speed: From concept to production in days rather than months.",
-      "High-level coaching logic available at no cost for private, personal use."
+      "Near-instant Proof of Concept development without reading thousands of documentation pages.",
+      "Perfectly optimized for private use—professional coaching at no cost.",
+      "Scalable architecture that treats every run as a data point for a larger season strategy."
     ],
-    tech: ["Efficiency", "Low Overhead"],
-    images: ["https://images.unsplash.com/photo-1461896756913-647eecc9a29e?auto=format&fit=crop&q=80&w=800"]
+    tech: ["Velocity", "Efficiency"],
+    images: ["./components/images/success.jpg"]
   },
   {
-    tag: "08_CHALLENGES",
-    title: "IMPROVEMENTS",
-    subtitle: "Dealing with the 'Forgetful' AI Coach.",
+    tag: "08_REFLECTIONS",
+    title: "CHALLENGES",
+    subtitle: "The 'Forgetful' AI Coach.",
     content: [
-      "AI 'Forgetfulness': Sometimes it overwrites logic we previously established.",
-      "Instruction Drift: Asking it to 'just discuss' often results in unwanted code changes.",
-      "Context Management: It occasionally refers back to stale requirements from past sessions."
+      "AI Forgetfulness: The model sometimes overwrites established logic or ignores code constraints.",
+      "Instruction Drift: Requests for simple discussions often result in accidental code modifications.",
+      "Managing context windows is critical to prevent the coach from losing the long-term roadmap."
     ],
-    tech: ["Context Management", "Instruction Following"],
-    images: ["https://images.unsplash.com/photo-1517245386807-bb43f82c33c4?auto=format&fit=crop&q=80&w=800"]
+    tech: ["Context Management", "AI Alignment"],
+    images: ["./components/images/challenges.jpg"]
   }
 ];
 
@@ -182,22 +182,29 @@ const Presentation: React.FC<{ onClose: () => void }> = ({ onClose }) => {
 
           {/* Right Column: Visual/Image */}
           <div className="lg:col-span-5 order-1 lg:order-2">
-            <div className={`grid gap-4 w-full h-full min-h-[300px] ${s.images && s.images.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
+            <div className={`grid gap-4 w-full h-full min-h-[350px] ${s.images && s.images.length > 1 ? 'grid-cols-2' : 'grid-cols-1'}`}>
               {s.images && s.images.length > 0 ? (
                 s.images.map((img, idx) => (
-                  <div key={idx} className="relative aspect-square rounded-3xl overflow-hidden border border-slate-800 group shadow-2xl shadow-cyan-500/5 bg-slate-900">
+                  <div key={idx} className="relative aspect-[4/5] rounded-3xl overflow-hidden border border-slate-800 group shadow-2xl shadow-cyan-500/5 bg-slate-900">
                     <img 
                       src={img} 
                       alt={`${s.title} ${idx + 1}`} 
                       className="w-full h-full object-cover grayscale opacity-60 group-hover:grayscale-0 group-hover:opacity-100 transition-all duration-1000 scale-105 group-hover:scale-100" 
                       onError={(e) => {
-                        (e.target as HTMLImageElement).src = 'https://images.unsplash.com/photo-1461896756913-647eecc9a29e?auto=format&fit=crop&q=80&w=800';
+                        // Fallback icon if image doesn't exist yet
+                        (e.target as HTMLImageElement).style.display = 'none';
+                        const parent = (e.target as HTMLImageElement).parentElement;
+                        if (parent) {
+                          parent.classList.add('flex', 'items-center', 'justify-center');
+                          parent.innerHTML = `<div class="flex flex-col items-center gap-2 opacity-20"><svg class="w-12 h-12 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg><span class="text-[8px] uppercase">Missing_Asset</span></div>`;
+                        }
                       }}
                     />
-                    <div className="absolute inset-0 bg-gradient-to-t from-slate-950/80 via-transparent to-transparent opacity-60"></div>
+                    <div className="absolute inset-0 bg-gradient-to-t from-slate-950/90 via-transparent to-transparent opacity-80"></div>
                     <div className="absolute bottom-4 left-4 right-4">
-                      <div className="bg-slate-900/80 backdrop-blur-md border border-slate-700/50 p-2 rounded-lg">
-                        <span className="text-[7px] text-cyan-500 font-black uppercase tracking-widest">Asset_{idx + 1}</span>
+                      <div className="bg-slate-900/60 backdrop-blur-md border border-slate-700/30 p-2 rounded-lg flex justify-between items-center">
+                        <span className="text-[7px] text-cyan-500 font-black uppercase tracking-widest">VISUAL_{idx + 1}</span>
+                        <div className="w-1.5 h-1.5 bg-cyan-500 rounded-full animate-pulse"></div>
                       </div>
                     </div>
                   </div>
