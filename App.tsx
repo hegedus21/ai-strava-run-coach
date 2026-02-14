@@ -86,6 +86,7 @@ const App: React.FC = () => {
     setIsProcessing('TESTING');
     setTestResults(null);
     const cleanUrl = backendUrl.trim().replace(/\/$/, '');
+    addLocalLog(`INIT: Starting Scraper Test for ${liveUrl}`);
     try {
       const res = await securedFetch(`${cleanUrl}/race/test-parse`, {
         method: 'POST',
@@ -98,6 +99,10 @@ const App: React.FC = () => {
         setTestResults({ checkpoints: data.checkpoints, logs: data.debugLogs || [] });
         if (data.success && data.count > 0) {
            addLocalLog(`Scraper Test: SUCCESS. Found ${data.count} checkpoints`, "success");
+           // Log each checkpoint details to console UI
+           data.checkpoints.forEach((cp: RaceCheckpoint) => {
+             addLocalLog(`Checkpoint Identified: ${cp.name} at ${cp.distanceKm}km - Time: ${cp.time}`, "info");
+           });
         } else {
            addLocalLog("Scraper Test: 0 data found. Inspect debug logs.", "error");
         }
@@ -203,7 +208,7 @@ const App: React.FC = () => {
           <div>
             <h1 className="text-white font-black uppercase text-sm flex items-center gap-2">
               StravAI_Command
-              <span className="text-[10px] text-cyan-500 font-bold border border-cyan-500/20 px-1.5 rounded">v1.4.5_STABLE</span>
+              <span className="text-[10px] text-cyan-500 font-bold border border-cyan-500/20 px-1.5 rounded">v1.4.6_STABLE</span>
             </h1>
             <div className={`text-[9px] uppercase font-bold tracking-widest mt-0.5 ${backendStatus === 'ONLINE' ? 'text-cyan-400' : 'text-red-500'}`}>
               {backendStatus}
