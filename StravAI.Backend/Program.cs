@@ -56,34 +56,6 @@ string GetCetTimestamp() {
     } catch { return DateTime.UtcNow.AddHours(1).ToString("dd/MM/yyyy HH:mm:ss") + " CET"; }
 }
 
-string CompactSummarize(List<JsonElement> activities) {
-    if (activities == null || activities.Count == 0) return "No history found.";
-    var grouped = activities
-        .Where(a => a.TryGetProperty("type", out var t) && t.ValueKind == JsonValueKind.String && t.GetString() == "Run")
-        .GroupBy(a => DateTime.Parse(a.GetProperty("start_date").GetString()!).ToString("yyyy-MM"))
-        .OrderByDescending(g => g.Key)
-        .Take(6);
-
-    var sb = new System.Text.StringBuilder();
-    sb.AppendLine("MONTHLY PERFORMANCE SUMMARY:");
-    foreach (var month in grouped) {
-        var totalKm = month.Sum(a => a.GetProperty("distance").GetDouble()) / 1000;
-        var avgSpeed = month.Average(a => a.GetProperty("average_speed").GetDouble());
-        var avgPace = avgSpeed > 0 ? (16.6667 / avgSpeed) : 0;
-        sb.AppendLine($"- {month.Key}: {totalKm:F1}km, Avg Pace: {avgPace:F2}m/k");
-    }
-
-    sb.AppendLine("\nRECENT EFFORTS:");
-    foreach (var a in activities.Take(15)) {
-        var date = a.GetProperty("start_date").GetString();
-        var dist = a.GetProperty("distance").GetDouble() / 1000;
-        var speed = a.GetProperty("average_speed").GetDouble();
-        var pace = speed > 0 ? (16.6667 / speed) : 0;
-        sb.AppendLine($"- {date}: {dist:F2}km @ {pace:F2}m/k");
-    }
-    return sb.ToString();
-}
-
 // --- Security Middleware ---
 app.Use(async (context, next) => {
     var path = context.Request.Path.Value ?? "";
@@ -110,8 +82,8 @@ app.Use(async (context, next) => {
 
 // --- Routes ---
 
-app.MapGet("/", () => "StravAI Engine v1.4.7_REFINED_SCRAPER is Online.");
-app.MapGet("/health", () => Results.Ok(new { status = "healthy", version = "1.4.7" }));
+app.MapGet("/", () => "StravAI Engine v1.4.8_STABLE is Online.");
+app.MapGet("/health", () => Results.Ok(new { status = "healthy", version = "1.4.8" }));
 app.MapGet("/logs", () => Results.Ok(logs.ToArray()));
 
 app.MapGet("/race/test-parse", () => Results.Ok(new { status = "Ready", methods = "POST", hint = "Send JSON via POST" }));
@@ -178,60 +150,47 @@ public static class RaceScraper {
         foreach (Match table in tables) {
             var tableHtml = table.Groups[1].Value;
             
-            // Heuristic to find the best table: look for columns
-            int nameIdx = -1, kmIdx = -1, timeIdx = -1, paceIdx = -1;
+            // Standard RunTiming UB2025 Layout (Individual Page)
+            // 0: Mérőpont, 1: Táv, 2: Áthaladás, 3: Versenyidő, 4: Tempó
+            int nameIdx = 0, kmIdx = 1, timeIdx = 3, paceIdx = 4;
             
-            // Try to find the header row via <thead> or first <tr> with <th>
             var headerMatch = Regex.Match(tableHtml, @"<thead[^>]*>(.*?)<\/thead>", RegexOptions.Singleline);
             string headerContent = headerMatch.Success ? headerMatch.Groups[1].Value : tableHtml;
             
             var headerCells = Regex.Matches(headerContent, @"<(th|td)[^>]*>(.*?)<\/\1>", RegexOptions.Singleline);
-            for (int i = 0; i < headerCells.Count; i++) {
-                var hText = Clean(headerCells[i].Groups[2].Value).ToLower();
-                
-                // Prioritize "Mérőpont" for name
-                if (hText.Contains("mérőpont") || hText.Contains("pont")) nameIdx = i;
-                // Prioritize "Táv" for distance
-                else if (hText.Contains("táv") || hText.Contains("km")) kmIdx = i;
-                // Prioritize "Versenyidő" for race time, avoiding "Áthaladás" (Time of Day)
-                else if (hText.Contains("versenyidő")) timeIdx = i;
-                else if (timeIdx == -1 && hText.Contains("idő")) timeIdx = i;
-                // Prioritize "Tempó" for pace
-                else if (hText.Contains("tempó") || hText.Contains("pace")) paceIdx = i;
+            if (headerCells.Count > 0) {
+                for (int i = 0; i < headerCells.Count; i++) {
+                    var hText = Clean(headerCells[i].Groups[2].Value).ToLower();
+                    if (hText == "mérőpont") nameIdx = i;
+                    else if (hText == "táv" || hText == "táv (km)") kmIdx = i;
+                    else if (hText == "versenyidő") timeIdx = i;
+                    else if (hText == "tempó" || hText == "tempó (min/km)") paceIdx = i;
+                }
             }
 
-            // Fallback for RunTiming standard if header detection failed to be specific
-            if (nameIdx == -1) nameIdx = 0;
-            if (kmIdx == -1) kmIdx = 1;
-            if (timeIdx == -1) timeIdx = 3;
-            if (paceIdx == -1) paceIdx = 4;
-
-            logs.Add($"HEURISTIC: Testing Columns -> Name:{nameIdx}, Km:{kmIdx}, Time:{timeIdx}, Pace:{paceIdx}");
+            logs.Add($"HEURISTIC: Columns -> Name:{nameIdx}, Km:{kmIdx}, Time:{timeIdx}, Pace:{paceIdx}");
 
             var rows = Regex.Matches(tableHtml, @"<tr[^>]*>(.*?)<\/tr>", RegexOptions.Singleline);
             foreach (Match row in rows) {
                 var cells = Regex.Matches(row.Groups[1].Value, @"<td[^>]*>(.*?)<\/td>", RegexOptions.Singleline);
-                if (cells.Count > Math.Max(nameIdx, Math.Max(kmIdx, Math.Max(timeIdx, paceIdx)))) {
-                    var name = Clean(cells[nameIdx].Groups[1].Value);
-                    var kmRaw = Clean(cells[kmIdx].Groups[1].Value);
-                    var kmStr = kmRaw.Replace(",", ".");
-                    var time = Clean(cells[timeIdx].Groups[1].Value);
-                    var pace = Clean(cells[paceIdx].Groups[1].Value);
-                    
-                    // Validation: must have a valid time format (HH:mm:ss or mm:ss) and distance
-                    if (double.TryParse(kmStr, out double km) && km > 0 && !string.IsNullOrEmpty(time) && time.Contains(":")) {
-                        results.Add(new RaceCheckpoint(name, km, time, pace));
-                    }
+                if (cells.Count >= 4) {
+                    try {
+                        var name = Clean(cells[nameIdx].Groups[1].Value);
+                        var kmStr = Clean(cells[kmIdx].Groups[1].Value).Replace(",", ".");
+                        var time = Clean(cells[timeIdx].Groups[1].Value);
+                        var pace = Clean(cells[paceIdx].Groups[1].Value);
+                        
+                        if (double.TryParse(kmStr, out double km) && km >= 0 && !string.IsNullOrEmpty(time) && time.Contains(":")) {
+                            results.Add(new RaceCheckpoint(name, km, time, pace));
+                        }
+                    } catch { }
                 }
             }
 
-            if (results.Count > 0) {
-                logs.Add($"SUCCESS: Found {results.Count} data rows in this table.");
-                break; // Use the first table that yields results
-            }
+            if (results.Count > 0) break;
         }
         
-        logs.Add($"SCRAPER_FINAL: Identified {results.Count} valid checkpoints.");
+        logs.Add($"SCRAPER_FINAL: Parsed {results.Count} checkpoints.");
         return (results.OrderBy(c => c.DistanceKm).ToList(), logs);
     }
 
@@ -310,18 +269,10 @@ public class RacePollingWorker : BackgroundService {
         try {
             using var client = _cf.CreateClient();
             var apiKey = Environment.GetEnvironmentVariable("GEMINI_API_KEY") ?? _cfg["API_KEY"];
-            var prompt = $@"ROLE: Elite Ultra Running Coach (mid-race strategist).
-EVENT: {config.RaceName} ({config.TotalDistance}km).
-TARGET PACE: {config.TargetPace}.
-CURRENT TELEMETRY:
-- Checkpoint: {cp.Name}
-- Total Distance: {cp.DistanceKm}km
-- Current Split Pace: {cp.Pace}
-- Elapsed/Clock Time: {cp.Time}
-
-CONTEXT: Athlete is exhausted but mentally strong.
-TASK: Provide short, punchy, actionable advice (2-3 sentences max). Focus on hydration, pace management, and morale. 
-Do not be verbose. Be the voice in their ear.";
+            var prompt = $@"ROLE: Elite Ultra Running Coach.
+EVENT: {config.RaceName}.
+TELEMETRY: {cp.Name} @ {cp.DistanceKm}km, Time: {cp.Time}, Pace: {cp.Pace}.
+Provide 2 sentences of tactical advice for the runner.";
 
             var payload = new { contents = new[] { new { parts = new[] { new { text = prompt } } } } };
             var res = await client.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={apiKey}", payload);
@@ -330,23 +281,16 @@ Do not be verbose. Be the voice in their ear.";
                 return json.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString() ?? "...";
             }
         } catch { }
-        return "Steady progress. Focus on your breathing and fuel well at the next aid station.";
+        return "Keep focus. Maintain your nutrition strategy.";
     }
 
     private async Task SendTelegramMessage(LiveRaceConfig config, RaceCheckpoint cp, string advice) {
         try {
             using var client = _cf.CreateClient();
-            var text = $"🏃‍♂️ *Checkpoint Reached: {cp.Name}*\n" +
-                       $"📍 Distance: {cp.DistanceKm}km\n" +
-                       $"⏱ Time: {cp.Time}\n" +
-                       $"⚡️ Pace: {cp.Pace}\n\n" +
-                       $"🤖 *Coach Advice:*\n{advice}";
-            
+            var text = $"🏃‍♂️ *Checkpoint: {cp.Name}*\n📍 {cp.DistanceKm}km\n⏱ {cp.Time}\n⚡️ {cp.Pace}\n\n🤖 *Coach:*\n{advice}";
             var url = $"https://api.telegram.org/bot{config.TelegramBotToken}/sendMessage";
             await client.PostAsJsonAsync(url, new { chat_id = config.TelegramChatId, text = text, parse_mode = "Markdown" });
-        } catch (Exception ex) {
-            _logs.Enqueue($"[{DateTime.UtcNow:HH:mm:ss}] [ERROR] Telegram Push Failed: {ex.Message}");
-        }
+        } catch { }
     }
 }
 
@@ -356,9 +300,7 @@ public class SeasonBackgroundWorker : BackgroundService {
     private readonly IConfiguration _cfg;
     public SeasonBackgroundWorker(IHttpClientFactory cf, ConcurrentQueue<string> l, IConfiguration cfg) { _cf = cf; _l = l; _cfg = cfg; }
     protected override async Task ExecuteAsync(CancellationToken ct) {
-        while (!ct.IsCancellationRequested) {
-            await Task.Delay(TimeSpan.FromHours(1), ct);
-        }
+        while (!ct.IsCancellationRequested) await Task.Delay(TimeSpan.FromHours(1), ct);
     }
 }
 
@@ -387,26 +329,22 @@ public static class SeasonStrategyEngine {
             var historyData = await client.GetFromJsonAsync<List<JsonElement>>("https://www.strava.com/api/v3/athlete/activities?per_page=200");
             var historySummary = summarizer(historyData ?? new());
             client.DefaultRequestHeaders.Authorization = null;
-            var prompt = $@"ATHLETE GOAL: {(customRace?.Name ?? envGetter("GOAL_RACE_TYPE"))} on {(customRace?.Date ?? envGetter("GOAL_RACE_DATE"))} (Target Time: {(customRace?.TargetTime ?? envGetter("GOAL_RACE_TIME"))}).
-{historySummary}
-Return Markdown coaching strategy.";
-            
+            var prompt = $@"GOAL: {(customRace?.Name ?? "Main Race")} on {(customRace?.Date ?? "2025-12-31")}.
+HISTORY: {historySummary}
+Return coaching strategy.";
             var apiKey = envGetter("API_KEY");
             var payload = new { contents = new[] { new { parts = new[] { new { text = prompt } } } } };
-            var geminiRes = await client.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={apiKey}", payload);
-            
-            if (geminiRes.IsSuccessStatusCode) {
-                var aiRes = await geminiRes.Content.ReadFromJsonAsync<JsonElement>();
+            var res = await client.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={apiKey}", payload);
+            if (res.IsSuccessStatusCode) {
+                var aiRes = await res.Content.ReadFromJsonAsync<JsonElement>();
                 var aiText = aiRes.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString();
                 if (!string.IsNullOrEmpty(aiText)) {
                     client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-                    await client.PostAsJsonAsync("https://www.strava.com/api/v3/activities", new { name = $"[StravAI] STRATEGY: {customRace?.Name ?? \"Plan\"}", type = "Workout", start_date_local = DateTime.UtcNow.ToString("O"), elapsed_time = 1, description = aiText, @private = true });
-                    L("Season Strategy successfully published to Strava.", "SUCCESS");
+                    await client.PostAsJsonAsync("https://www.strava.com/api/v3/activities", new { name = $"[StravAI] Strategy", type = "Workout", description = aiText, @private = true });
+                    L("Strategy published.", "SUCCESS");
                 }
-            } else {
-                L($"Gemini API Error: {geminiRes.StatusCode}", \"ERROR\");
-            }
-        } catch (Exception ex) { L($"Season Analysis Crash: {ex.Message}", "ERROR"); }
+            } else { L($"API Error: {res.StatusCode}", "ERROR"); }
+        } catch (Exception ex) { L($"Crash: {ex.Message}", "ERROR"); }
     }
 }
 
