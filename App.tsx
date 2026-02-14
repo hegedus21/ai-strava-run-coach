@@ -86,7 +86,7 @@ const App: React.FC = () => {
     setIsProcessing('TESTING');
     setTestResults(null);
     const cleanUrl = backendUrl.trim().replace(/\/$/, '');
-    addLocalLog(`DIAG_INIT: Scraping telemetry from ${liveUrl}`, "info");
+    addLocalLog(`DIAG_INIT: Probing athlete telemetry at ${liveUrl}`, "info");
     try {
       const res = await securedFetch(`${cleanUrl}/race/test-parse`, {
         method: 'POST',
@@ -98,16 +98,16 @@ const App: React.FC = () => {
         const data = await res.json();
         setTestResults({ checkpoints: data.checkpoints, logs: data.debugLogs || [] });
         if (data.success && data.count > 0) {
-           addLocalLog(`Scraper Test: SUCCESS. Found ${data.count} checkpoints.`, "success");
+           addLocalLog(`Scraper Test: SUCCESS. Identified ${data.count} checkpoints.`, "success");
            data.checkpoints.forEach((cp: RaceCheckpoint) => {
-             addLocalLog(` >> DATA: [${cp.distanceKm.toFixed(2)}km] CP: ${cp.name} | TIME: ${cp.time}`, "info");
+             addLocalLog(` >> CP_DETECTED: [${cp.distanceKm.toFixed(2)}km] ${cp.name} | ARRIVAL: ${cp.time}`, "info");
            });
         } else {
-           addLocalLog("Scraper Test: 0 data points found. The engine could not identify a valid results table.", "error");
+           addLocalLog("Scraper Test: 0 data points found. The engine could not map any checkpoint rows.", "error");
         }
       } else {
         addLocalLog(`Scraper Test Error: ${res.status}`, "error");
-        setTestResults({ checkpoints: [], logs: [`FATAL_HTTP_ERROR: ${res.status}`, `HINT: A 404 means the backend failed to build or the path is wrong.`] });
+        setTestResults({ checkpoints: [], logs: [`FATAL_HTTP_ERROR: ${res.status}`, `HINT: Check if backend is Online and Program.cs built correctly.`] });
       }
     } catch (e: any) {
       addLocalLog(`Connection Failed: ${e.message}`, "error");
@@ -199,7 +199,7 @@ const App: React.FC = () => {
           <div>
             <h1 className="text-white font-black uppercase text-sm flex items-center gap-2">
               StravAI_Command
-              <span className="text-[10px] text-cyan-500 font-bold border border-cyan-500/20 px-1.5 rounded">v1.4.8_STABLE</span>
+              <span className="text-[10px] text-cyan-500 font-bold border border-cyan-500/20 px-1.5 rounded">v1.4.9_STABLE</span>
             </h1>
             <div className={`text-[9px] uppercase font-bold tracking-widest mt-0.5 ${backendStatus === 'ONLINE' ? 'text-cyan-400' : 'text-red-500'}`}>
               {backendStatus}
