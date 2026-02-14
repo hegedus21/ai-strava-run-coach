@@ -53,3 +53,29 @@ export interface StravaWebhookEvent {
   subscription_id: number;
   event_time: number;
 }
+
+// --- Live Race Types ---
+
+export interface RaceCheckpoint {
+  name: string;
+  distanceKm: number;
+  time: string;
+  pace: string;
+}
+
+export interface LiveRaceConfig {
+  timingUrl: string;
+  telegramBotToken: string;
+  telegramChatId: string;
+  targetPace: string;
+  raceName: string;
+  totalDistance: number;
+}
+
+export interface LiveRaceStatus {
+  isActive: boolean;
+  lastCheckpoint?: RaceCheckpoint;
+  checkpointsFound: number;
+  lastUpdate: string;
+  latestAdvice?: string;
+}
