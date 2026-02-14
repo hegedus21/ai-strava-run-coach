@@ -53,7 +53,7 @@ string GetCetTimestamp() {
             ? TimeZoneInfo.FindSystemTimeZoneById("Central European Standard Time") 
             : TimeZoneInfo.FindSystemTimeZoneById("Europe/Berlin");
         return TimeZoneInfo.ConvertTimeFromUtc(DateTime.UtcNow, tzi).ToString("dd/MM/yyyy HH:mm:ss") + " CET";
-    } catch { return DateTime.UtcNow.AddHours(1).ToString("dd/MM/yyyy HH:mm:ss") + " CET"; }
+    } catch { return DateTime.UtcNow.AddHours(1).ToString("dd/yyyy HH:mm:ss") + " CET"; }
 }
 
 // --- Security Middleware ---
@@ -82,8 +82,8 @@ app.Use(async (context, next) => {
 
 // --- Routes ---
 
-app.MapGet("/", () => "StravAI Engine v1.4.8_STABLE is Online.");
-app.MapGet("/health", () => Results.Ok(new { status = "healthy", version = "1.4.8" }));
+app.MapGet("/", () => "StravAI Engine v1.4.9_STABLE is Online.");
+app.MapGet("/health", () => Results.Ok(new { status = "healthy", version = "1.4.9" }));
 app.MapGet("/logs", () => Results.Ok(logs.ToArray()));
 
 app.MapGet("/race/test-parse", () => Results.Ok(new { status = "Ready", methods = "POST", hint = "Send JSON via POST" }));
@@ -150,9 +150,8 @@ public static class RaceScraper {
         foreach (Match table in tables) {
             var tableHtml = table.Groups[1].Value;
             
-            // Standard RunTiming UB2025 Layout (Individual Page)
-            // 0: Mérőpont, 1: Táv, 2: Áthaladás, 3: Versenyidő, 4: Tempó
-            int nameIdx = 0, kmIdx = 1, timeIdx = 3, paceIdx = 4;
+            // Standard RunTiming Layout detection
+            int nameIdx = -1, kmIdx = -1, timeIdx = -1, paceIdx = -1;
             
             var headerMatch = Regex.Match(tableHtml, @"<thead[^>]*>(.*?)<\/thead>", RegexOptions.Singleline);
             string headerContent = headerMatch.Success ? headerMatch.Groups[1].Value : tableHtml;
@@ -161,25 +160,37 @@ public static class RaceScraper {
             if (headerCells.Count > 0) {
                 for (int i = 0; i < headerCells.Count; i++) {
                     var hText = Clean(headerCells[i].Groups[2].Value).ToLower();
-                    if (hText == "mérőpont") nameIdx = i;
-                    else if (hText == "táv" || hText == "táv (km)") kmIdx = i;
-                    else if (hText == "versenyidő") timeIdx = i;
-                    else if (hText == "tempó" || hText == "tempó (min/km)") paceIdx = i;
+                    if (hText.Contains("mérőpont")) nameIdx = i;
+                    else if (hText.Contains("táv") || hText.Contains("km")) {
+                        if (kmIdx == -1) kmIdx = i;
+                    }
+                    else if (hText.Contains("versenyidő")) timeIdx = i;
+                    else if (timeIdx == -1 && hText.Contains("idő")) timeIdx = i;
+                    else if (hText.Contains("tempó") || hText.Contains("pace")) paceIdx = i;
                 }
             }
 
-            logs.Add($"HEURISTIC: Columns -> Name:{nameIdx}, Km:{kmIdx}, Time:{timeIdx}, Pace:{paceIdx}");
+            // Fallback to common UB indices if detection was incomplete
+            if (nameIdx == -1) nameIdx = 1;
+            if (kmIdx == -1) kmIdx = 2;
+            if (timeIdx == -1) timeIdx = 4;
+            if (paceIdx == -1) paceIdx = 5;
+
+            logs.Add($"HEURISTIC: Mapping -> Name:{nameIdx}, Km:{kmIdx}, Time:{timeIdx}, Pace:{paceIdx}");
 
             var rows = Regex.Matches(tableHtml, @"<tr[^>]*>(.*?)<\/tr>", RegexOptions.Singleline);
             foreach (Match row in rows) {
                 var cells = Regex.Matches(row.Groups[1].Value, @"<td[^>]*>(.*?)<\/td>", RegexOptions.Singleline);
-                if (cells.Count >= 4) {
+                int maxRequired = Math.Max(nameIdx, Math.Max(kmIdx, Math.Max(timeIdx, paceIdx)));
+                
+                if (cells.Count > maxRequired) {
                     try {
                         var name = Clean(cells[nameIdx].Groups[1].Value);
                         var kmStr = Clean(cells[kmIdx].Groups[1].Value).Replace(",", ".");
                         var time = Clean(cells[timeIdx].Groups[1].Value);
                         var pace = Clean(cells[paceIdx].Groups[1].Value);
                         
+                        // Valid RunTiming row has a numeric distance and a time with colon
                         if (double.TryParse(kmStr, out double km) && km >= 0 && !string.IsNullOrEmpty(time) && time.Contains(":")) {
                             results.Add(new RaceCheckpoint(name, km, time, pace));
                         }
@@ -190,7 +201,7 @@ public static class RaceScraper {
             if (results.Count > 0) break;
         }
         
-        logs.Add($"SCRAPER_FINAL: Parsed {results.Count} checkpoints.");
+        logs.Add($"SCRAPER_FINAL: Identified {results.Count} checkpoints.");
         return (results.OrderBy(c => c.DistanceKm).ToList(), logs);
     }
 
@@ -281,13 +292,13 @@ Provide 2 sentences of tactical advice for the runner.";
                 return json.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString() ?? "...";
             }
         } catch { }
-        return "Keep focus. Maintain your nutrition strategy.";
+        return "Steady progress. Stay fueled and hydrate.";
     }
 
     private async Task SendTelegramMessage(LiveRaceConfig config, RaceCheckpoint cp, string advice) {
         try {
             using var client = _cf.CreateClient();
-            var text = $"🏃‍♂️ *Checkpoint: {cp.Name}*\n📍 {cp.DistanceKm}km\n⏱ {cp.Time}\n⚡️ {cp.Pace}\n\n🤖 *Coach:*\n{advice}";
+            var text = $"🏃‍♂️ *Checkpoint: {cp.Name}*\n📍 {cp.DistanceKm}km\n⏱ {cp.Time}\n⚡️ {cp.Pace}\n\n🤖 *Coach Advice:*\n{advice}";
             var url = $"https://api.telegram.org/bot{config.TelegramBotToken}/sendMessage";
             await client.PostAsJsonAsync(url, new { chat_id = config.TelegramChatId, text = text, parse_mode = "Markdown" });
         } catch { }
