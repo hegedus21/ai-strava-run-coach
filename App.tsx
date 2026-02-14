@@ -86,7 +86,7 @@ const App: React.FC = () => {
     setIsProcessing('TESTING');
     setTestResults(null);
     const cleanUrl = backendUrl.trim().replace(/\/$/, '');
-    addLocalLog(`INIT: Starting Scraper Test for ${liveUrl}`);
+    addLocalLog(`DIAG_INIT: Scraping individual telemetry from ${liveUrl}`, "info");
     try {
       const res = await securedFetch(`${cleanUrl}/race/test-parse`, {
         method: 'POST',
@@ -98,13 +98,13 @@ const App: React.FC = () => {
         const data = await res.json();
         setTestResults({ checkpoints: data.checkpoints, logs: data.debugLogs || [] });
         if (data.success && data.count > 0) {
-           addLocalLog(`Scraper Test: SUCCESS. Found ${data.count} checkpoints`, "success");
-           // Log each checkpoint details to console UI
+           addLocalLog(`Scraper Test: SUCCESS. Identified ${data.count} race checkpoints.`, "success");
+           // Prominent logging of distances and times
            data.checkpoints.forEach((cp: RaceCheckpoint) => {
-             addLocalLog(`Checkpoint Identified: ${cp.name} at ${cp.distanceKm}km - Time: ${cp.time}`, "info");
+             addLocalLog(`[DATA] CP: ${cp.name.padEnd(20)} | DIST: ${cp.distanceKm.toFixed(2)}km | TIME: ${cp.time}`, "info");
            });
         } else {
-           addLocalLog("Scraper Test: 0 data found. Inspect debug logs.", "error");
+           addLocalLog("Scraper Test: 0 data points found. The engine could not identify the result table.", "error");
         }
       } else {
         const errText = await res.text();
@@ -112,14 +112,14 @@ const App: React.FC = () => {
         setTestResults({ checkpoints: [], logs: [
           `FATAL_HTTP_ERROR: ${res.status} ${res.statusText}`,
           `URL: ${cleanUrl}/race/test-parse`,
-          `HINT: A 404 here often means the Backend failed to build.`,
-          `REASON: Check your build logs on Koyeb. Ensure you haven't mixed C# and Javascript code in Program.cs.`,
+          `HINT: A 404 here often means the Backend failed to build or the path is incorrect.`,
+          `REASON: Check build logs on Koyeb. Current Stable Version: 1.4.7_REFINED`,
           `RAW_RESPONSE: ${errText.substring(0, 100)}`
         ] });
       }
     } catch (e: any) {
       addLocalLog(`Connection Failed: ${e.message}`, "error");
-      setTestResults({ checkpoints: [], logs: [`EXCEPTION: ${e.message}`, `Check Gateway URL.`] });
+      setTestResults({ checkpoints: [], logs: [`EXCEPTION: ${e.message}`, `Check Gateway URL in Config.`] });
     } finally {
       setIsProcessing(null);
     }
@@ -143,7 +143,7 @@ const App: React.FC = () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(config)
       });
-      if (res.ok) addLocalLog(`Live Tracker Engaged`, "success");
+      if (res.ok) addLocalLog(`Live Tracker Engaged for ${raceName}`, "success");
     } else {
       const res = await securedFetch(`${cleanUrl}/race/stop`, { method: 'POST' });
       if (res.ok) addLocalLog("Live Tracker Disengaged", "info");
@@ -208,7 +208,7 @@ const App: React.FC = () => {
           <div>
             <h1 className="text-white font-black uppercase text-sm flex items-center gap-2">
               StravAI_Command
-              <span className="text-[10px] text-cyan-500 font-bold border border-cyan-500/20 px-1.5 rounded">v1.4.6_STABLE</span>
+              <span className="text-[10px] text-cyan-500 font-bold border border-cyan-500/20 px-1.5 rounded">v1.4.7_STABLE</span>
             </h1>
             <div className={`text-[9px] uppercase font-bold tracking-widest mt-0.5 ${backendStatus === 'ONLINE' ? 'text-cyan-400' : 'text-red-500'}`}>
               {backendStatus}
@@ -307,7 +307,7 @@ const App: React.FC = () => {
                                 testResults.checkpoints.map((cp, i) => (
                                 <tr key={i} className="border-b border-slate-800/50 hover:bg-slate-800/20">
                                     <td className="px-4 py-2 font-bold text-white">{cp.name}</td>
-                                    <td className="px-4 py-2 text-cyan-400">{cp.distanceKm}</td>
+                                    <td className="px-4 py-2 text-cyan-400">{cp.distanceKm.toFixed(2)}</td>
                                     <td className="px-4 py-2 italic">{cp.time}</td>
                                 </tr>
                                 ))
@@ -354,7 +354,7 @@ const App: React.FC = () => {
                           </div>
                           <div className="bg-slate-950/50 p-4 rounded-xl border border-slate-800">
                              <p className="text-[9px] text-slate-500 font-bold uppercase">Total_KM</p>
-                             <p className="text-lg font-black text-white">{raceStatus.lastCheckpoint?.distanceKm || '0'} / {raceTotalDist}</p>
+                             <p className="text-lg font-black text-white">{raceStatus.lastCheckpoint?.distanceKm.toFixed(2) || '0.00'} / {raceTotalDist}</p>
                           </div>
                        </div>
                     </div>
