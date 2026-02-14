@@ -110,8 +110,8 @@ app.Use(async (context, next) => {
 
 // --- Routes ---
 
-app.MapGet("/", () => "StravAI Engine v1.4.5_STABLE is Online.");
-app.MapGet("/health", () => Results.Ok(new { status = "healthy", version = "1.4.5" }));
+app.MapGet("/", () => "StravAI Engine v1.4.6_STABLE is Online.");
+app.MapGet("/health", () => Results.Ok(new { status = "healthy", version = "1.4.6" }));
 app.MapGet("/logs", () => Results.Ok(logs.ToArray()));
 
 app.MapGet("/race/test-parse", () => Results.Ok(new { status = "Ready", methods = "POST", hint = "Send JSON via POST" }));
@@ -353,6 +353,38 @@ public static class SeasonStrategyEngine {
             var data = await res.Content.ReadFromJsonAsync<JsonElement>();
             return data.GetProperty("access_token").GetString();
         } catch { return null; }
+    }
+
+    public static async Task ProcessSeasonAnalysisAsync(IHttpClientFactory clientFactory, Func<string, string> envGetter, ConcurrentQueue<string> logs, Func<string> timeGetter, Func<List<JsonElement>, string> summarizer, CustomRaceRequest? customRace = null) {
+        void L(string m, string lvl = "INFO") => logs.Enqueue($"[{DateTime.UtcNow:HH:mm:ss}] [{lvl}] {m}");
+        try {
+            using var client = clientFactory.CreateClient();
+            var token = await GetStravaAccessToken(client, envGetter);
+            if (token == null) { L("Auth Failed", "ERROR"); return; }
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            var historyData = await client.GetFromJsonAsync<List<JsonElement>>("https://www.strava.com/api/v3/athlete/activities?per_page=200");
+            var historySummary = summarizer(historyData ?? new());
+            client.DefaultRequestHeaders.Authorization = null;
+            var prompt = $@"ATHLETE GOAL: {(customRace?.Name ?? envGetter("GOAL_RACE_TYPE"))} on {(customRace?.Date ?? envGetter("GOAL_RACE_DATE"))} (Target Time: {(customRace?.TargetTime ?? envGetter("GOAL_RACE_TIME"))}).
+{historySummary}
+Return Markdown coaching strategy.";
+            
+            var apiKey = envGetter("API_KEY");
+            var payload = new { contents = new[] { new { parts = new[] { new { text = prompt } } } } };
+            var geminiRes = await client.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={apiKey}", payload);
+            
+            if (geminiRes.IsSuccessStatusCode) {
+                var aiRes = await geminiRes.Content.ReadFromJsonAsync<JsonElement>();
+                var aiText = aiRes.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString();
+                if (!string.IsNullOrEmpty(aiText)) {
+                    client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+                    await client.PostAsJsonAsync("https://www.strava.com/api/v3/activities", new { name = $"[StravAI] STRATEGY: {customRace?.Name ?? "Plan"}", type = "Workout", start_date_local = DateTime.UtcNow.ToString("O"), elapsed_time = 1, description = aiText, @private = true });
+                    L("Season Strategy successfully published to Strava.", "SUCCESS");
+                }
+            } else {
+                L($"Gemini API Error: {geminiRes.StatusCode}", "ERROR");
+            }
+        } catch (Exception ex) { L($"Season Analysis Crash: {ex.Message}", "ERROR"); }
     }
 }
 
