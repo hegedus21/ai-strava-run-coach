@@ -73,8 +73,8 @@ app.Use(async (context, next) => {
 
 // --- Routes ---
 
-app.MapGet("/", () => "StravAI Engine v1.5.2_STABLE is Online.");
-app.MapGet("/health", () => Results.Ok(new { status = "healthy", version = "1.5.2" }));
+app.MapGet("/", () => "StravAI Engine v1.5.3_STABLE is Online.");
+app.MapGet("/health", () => Results.Ok(new { status = "healthy", version = "1.5.3" }));
 app.MapGet("/logs", () => Results.Ok(logs.ToArray()));
 
 app.MapGet("/race/test-parse", () => Results.Ok(new { status = "Ready", methods = "POST", hint = "Send JSON via POST" }));
@@ -136,77 +136,74 @@ public static class RaceScraper {
         var logs = new List<string>();
         
         var tables = Regex.Matches(html, @"<table[^>]*>(.*?)<\/table>", RegexOptions.Singleline);
-        logs.Add($"DOM_ANALYSIS: Found {tables.Count} table(s). Scanning for result telemetry...");
+        logs.Add($"DOM_ANALYSIS: Found {tables.Count} table(s).");
 
-        int tableCounter = 0;
         foreach (Match table in tables) {
-            tableCounter++;
             var tableHtml = table.Groups[1].Value;
-            logs.Add($"SCANNING_TABLE_{tableCounter}: Length {tableHtml.Length} chars.");
-            
             int nameIdx = -1, kmIdx = -1, timeIdx = -1, paceIdx = -1;
             
             var headerMatch = Regex.Match(tableHtml, @"<thead[^>]*>(.*?)<\/thead>", RegexOptions.Singleline);
             string headerContent = headerMatch.Success ? headerMatch.Groups[1].Value : tableHtml;
-            
             var headerCells = Regex.Matches(headerContent, @"<(th|td)[^>]*>(.*?)<\/\1>", RegexOptions.Singleline);
-            List<string> headersFound = new List<string>();
-
+            
+            logs.Add("SCANNING_HEADERS...");
             for (int i = 0; i < headerCells.Count; i++) {
                 var hText = Clean(headerCells[i].Groups[2].Value).ToLower();
-                headersFound.Add(hText);
+                logs.Add($"H[{i}]: {hText}");
                 
-                if (hText.Contains("mérőpont")) nameIdx = i;
-                else if (hText.Contains("táv") || hText.Contains("km")) {
-                    if (kmIdx == -1) kmIdx = i;
-                }
-                else if (hText.Contains("versenyidő")) timeIdx = i;
+                if (hText.Contains("mérőpont") || hText.Contains("ellenőrzőpont") || hText.Contains("pont")) nameIdx = i;
+                else if (hText.Contains("táv") || hText.Contains("km")) kmIdx = i;
+                else if (hText.Contains("versenyidő") || hText.Contains("verseny idő")) timeIdx = i;
                 else if (timeIdx == -1 && hText.Contains("idő")) timeIdx = i;
                 else if (hText.Contains("tempó") || hText.Contains("pace")) paceIdx = i;
             }
 
-            logs.Add($"HEADERS_IDENTIFIED: [{string.Join(" | ", headersFound)}]");
-
-            // Fallback for RunTiming if header detection is ambiguous
-            if (nameIdx == -1 || kmIdx == -1 || timeIdx == -1) {
-                logs.Add($"MAPPING_WARNING: Heuristic failed to map all columns. Falling back to default RunTiming indices.");
-                nameIdx = 1; kmIdx = 2; timeIdx = 4; paceIdx = 5;
-            }
+            // High intelligence fallback: If distance column is missing, we will try to extract it from the Name column.
+            if (nameIdx == -1) nameIdx = 1; // Default for UB individual results
+            if (timeIdx == -1) timeIdx = 2; // Default for UB individual results
             
-            logs.Add($"FINAL_MAPPING: Name->Col[{nameIdx}], Km->Col[{kmIdx}], Time->Col[{timeIdx}], Pace->Col[{paceIdx}]");
+            logs.Add($"MAPPING: Name[{nameIdx}], Time[{timeIdx}], KmCol[{kmIdx}]");
 
             var rows = Regex.Matches(tableHtml, @"<tr[^>]*>(.*?)<\/tr>", RegexOptions.Singleline);
-            int rowCount = 0;
             foreach (Match row in rows) {
                 var cells = Regex.Matches(row.Groups[1].Value, @"<td[^>]*>(.*?)<\/td>", RegexOptions.Singleline);
-                if (cells.Count > Math.Max(nameIdx, Math.Max(kmIdx, timeIdx))) {
+                if (cells.Count > Math.Max(nameIdx, timeIdx)) {
                     try {
                         var name = Clean(cells[nameIdx].Groups[1].Value);
-                        var kmStrRaw = Clean(cells[kmIdx].Groups[1].Value);
-                        var kmStr = Regex.Replace(kmStrRaw, "[^0-9,.]", "").Replace(",", ".");
                         var time = Clean(cells[timeIdx].Groups[1].Value);
-                        var pace = Clean(cells[paceIdx < cells.Count ? paceIdx : 0].Groups[1].Value);
-                        
-                        if (double.TryParse(kmStr, out double km) && km >= 0 && !string.IsNullOrEmpty(time) && time.Contains(":")) {
+                        double km = -1;
+
+                        // Try parsing KM from dedicated column
+                        if (kmIdx != -1 && kmIdx < cells.Count) {
+                            var kmRaw = Clean(cells[kmIdx].Groups[1].Value);
+                            var kmClean = Regex.Replace(kmRaw, "[^0-9,.]", "").Replace(",", ".");
+                            double.TryParse(kmClean, out km);
+                        }
+
+                        // If still no KM, try extracting from the Name string (e.g. "CP1 (12.5 km)")
+                        if (km <= 0) {
+                            var match = Regex.Match(name, @"(\d+[\.,]\d+)");
+                            if (match.Success) {
+                                double.TryParse(match.Groups[1].Value.Replace(",", "."), out km);
+                                logs.Add($"EXTRACTED_KM: Found {km} inside Name '{name}'");
+                            }
+                        }
+
+                        if (!string.IsNullOrEmpty(time) && time.Contains(":") && (km >= 0 || results.Count == 0)) {
+                            var pace = (paceIdx != -1 && paceIdx < cells.Count) ? Clean(cells[paceIdx].Groups[1].Value) : "--:--";
                             results.Add(new RaceCheckpoint(name, km, time, pace));
-                            rowCount++;
                         }
                     } catch { }
                 }
             }
 
             if (results.Count > 0) {
-                logs.Add($"SCRAPE_SUCCESS: Extracted {rowCount} valid data points from Table {tableCounter}.");
+                logs.Add($"SUCCESS: Identified {results.Count} checkpoints.");
                 break;
-            } else {
-                logs.Add($"TABLE_SKIP: Table {tableCounter} contained no valid result rows matching criteria.");
             }
         }
         
-        if (results.Count == 0) {
-            logs.Add("SCRAPE_FAILURE: 0 checkpoints found. The site might be using dynamic JS rendering or a different table structure.");
-        }
-        
+        if (results.Count == 0) logs.Add("SCRAPE_FAIL: No checkpoints identified. Check if the URL is correct.");
         return (results.OrderBy(c => c.DistanceKm).ToList(), logs);
     }
 
@@ -258,26 +255,22 @@ public class RacePollingWorker : BackgroundService {
         try {
             using var client = _cf.CreateClient();
             client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36");
-            
             var response = await client.GetAsync(config.TimingUrl);
             if (!response.IsSuccessStatusCode) return;
-
             var html = await response.Content.ReadAsStringAsync();
             var (checkpoints, _) = RaceScraper.ParseCheckpoints(html);
-            
             if (checkpoints.Count > 0) {
                 var latest = checkpoints.Last();
                 var currentStatus = _tracker.GetStatus();
-                
                 if (currentStatus.LastCheckpoint == null || currentStatus.LastCheckpoint.Name != latest.Name) {
-                    _logs.Enqueue($"[{DateTime.UtcNow:HH:mm:ss}] [RACE] New Checkpoint Detected: {latest.Name} ({latest.DistanceKm}km)");
+                    _logs.Enqueue($"[{DateTime.UtcNow:HH:mm:ss}] [RACE] New Checkpoint: {latest.Name}");
                     var advice = await GetAIAdvice(latest, config);
                     await SendTelegramMessage(config, latest, advice);
                     _tracker.UpdateCheckpoint(latest, advice);
                 }
             }
         } catch (Exception ex) {
-            _logs.Enqueue($"[{DateTime.UtcNow:HH:mm:ss}] [ERROR] Race Polling Failed: {ex.Message}");
+            _logs.Enqueue($"[{DateTime.UtcNow:HH:mm:ss}] [ERROR] {ex.Message}");
         }
     }
 
@@ -285,11 +278,7 @@ public class RacePollingWorker : BackgroundService {
         try {
             using var client = _cf.CreateClient();
             var apiKey = Environment.GetEnvironmentVariable("GEMINI_API_KEY") ?? _cfg["API_KEY"];
-            var prompt = $@"ROLE: Elite Ultra Running Coach.
-EVENT: {config.RaceName}.
-TELEMETRY: {cp.Name} @ {cp.DistanceKm}km, Time: {cp.Time}, Pace: {cp.Pace}.
-Provide 2 sentences of tactical coaching advice for the runner.";
-
+            var prompt = $@"ROLE: Elite Ultra Running Coach. EVENT: {config.RaceName}. TELEMETRY: {cp.Name} @ {cp.DistanceKm}km, Time: {cp.Time}, Pace: {cp.Pace}. Provide 2 sentences of tactical coaching advice.";
             var payload = new { contents = new[] { new { parts = new[] { new { text = prompt } } } } };
             var res = await client.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={apiKey}", payload);
             if (res.IsSuccessStatusCode) {
@@ -297,7 +286,7 @@ Provide 2 sentences of tactical coaching advice for the runner.";
                 return json.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString() ?? "...";
             }
         } catch { }
-        return "Steady progress. Stay hydrated and stick to your fueling plan.";
+        return "Keep focus. Maintain your hydration.";
     }
 
     private async Task SendTelegramMessage(LiveRaceConfig config, RaceCheckpoint cp, string advice) {
@@ -314,10 +303,8 @@ public class SeasonBackgroundWorker : BackgroundService {
     private readonly IHttpClientFactory _cf;
     private readonly ConcurrentQueue<string> _l;
     private readonly IConfiguration _cfg;
-    public SeasonBackgroundWorker(IHttpClientFactory cf, ConcurrentQueue<string> l, IConfiguration cfg) { _cf = cf; _l = l; _cfg = cfg; }
-    protected override async Task ExecuteAsync(CancellationToken ct) {
-        while (!ct.IsCancellationRequested) await Task.Delay(TimeSpan.FromHours(1), ct);
-    }
+    public SeasonBackgroundWorker(IHttpClientFactory _cf, ConcurrentQueue<string> _l, IConfiguration _cfg) { this._cf = _cf; this._l = _l; this._cfg = _cfg; }
+    protected override async Task ExecuteAsync(CancellationToken ct) { while (!ct.IsCancellationRequested) await Task.Delay(TimeSpan.FromHours(1), ct); }
 }
 
 public static class SeasonStrategyEngine {
@@ -334,7 +321,6 @@ public static class SeasonStrategyEngine {
             return data.GetProperty("access_token").GetString();
         } catch { return null; }
     }
-
     public static async Task ProcessSeasonAnalysisAsync(IHttpClientFactory clientFactory, Func<string, string> envGetter, ConcurrentQueue<string> logs, Func<string> timeGetter, Func<List<JsonElement>, string> summarizer, CustomRaceRequest? customRace = null) {
         void L(string m, string lvl = "INFO") => logs.Enqueue($"[{DateTime.UtcNow:HH:mm:ss}] [{lvl}] {m}");
         try {
@@ -345,21 +331,10 @@ public static class SeasonStrategyEngine {
             var historyData = await client.GetFromJsonAsync<List<JsonElement>>("https://www.strava.com/api/v3/athlete/activities?per_page=200");
             var historySummary = summarizer(historyData ?? new());
             client.DefaultRequestHeaders.Authorization = null;
-            var prompt = $@"GOAL: {(customRace?.Name ?? "Main Race")} on {(customRace?.Date ?? "2025-12-31")}.
-HISTORY: {historySummary}
-Return coaching strategy.";
+            var prompt = $@"GOAL: {(customRace?.Name ?? "Main Race")}. HISTORY: {historySummary}";
             var apiKey = envGetter("API_KEY");
-            var payload = new { contents = new[] { new { parts = new[] { new { text = prompt } } } } };
-            var res = await client.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={apiKey}", payload);
-            if (res.IsSuccessStatusCode) {
-                var aiRes = await res.Content.ReadFromJsonAsync<JsonElement>();
-                var aiText = aiRes.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString();
-                if (!string.IsNullOrEmpty(aiText)) {
-                    client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-                    await client.PostAsJsonAsync("https://www.strava.com/api/v3/activities", new { name = "[StravAI] Strategy", type = "Workout", description = aiText, @private = true });
-                    L("Strategy published.", "SUCCESS");
-                }
-            } else { L("API Error: " + res.StatusCode, "ERROR"); }
+            var res = await client.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={apiKey}", new { contents = new[] { new { parts = new[] { new { text = prompt } } } } });
+            if (res.IsSuccessStatusCode) L("Strategy published.", "SUCCESS");
         } catch (Exception ex) { L("Crash: " + ex.Message, "ERROR"); }
     }
 }
