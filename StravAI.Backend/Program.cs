@@ -110,8 +110,8 @@ app.Use(async (context, next) => {
 
 // --- Routes ---
 
-app.MapGet("/", () => "StravAI Engine v1.4.6_STABLE is Online.");
-app.MapGet("/health", () => Results.Ok(new { status = "healthy", version = "1.4.6" }));
+app.MapGet("/", () => "StravAI Engine v1.4.7_REFINED_SCRAPER is Online.");
+app.MapGet("/health", () => Results.Ok(new { status = "healthy", version = "1.4.7" }));
 app.MapGet("/logs", () => Results.Ok(logs.ToArray()));
 
 app.MapGet("/race/test-parse", () => Results.Ok(new { status = "Ready", methods = "POST", hint = "Send JSON via POST" }));
@@ -177,39 +177,61 @@ public static class RaceScraper {
 
         foreach (Match table in tables) {
             var tableHtml = table.Groups[1].Value;
-            int nameIdx = 0, kmIdx = 1, timeIdx = 3, paceIdx = 4;
             
-            var headerRow = Regex.Match(tableHtml, @"<tr[^>]*>(.*?)<\/tr>", RegexOptions.Singleline);
-            if (headerRow.Success) {
-                var headers = Regex.Matches(headerRow.Groups[1].Value, @"<(th|td)[^>]*>(.*?)<\/\1>", RegexOptions.Singleline);
-                for (int i = 0; i < headers.Count; i++) {
-                    var hText = Clean(headers[i].Groups[2].Value).ToLower();
-                    if (hText.Contains("mérőpont") || hText.Contains("pont")) nameIdx = i;
-                    else if (hText.Contains("táv") || hText.Contains("km")) kmIdx = i;
-                    else if (hText.Contains("idő") || hText.Contains("versenyidő")) timeIdx = i;
-                    else if (hText.Contains("tempó") || hText.Contains("pace")) paceIdx = i;
-                }
-                logs.Add($"HEURISTIC: Columns Identified -> Name:{nameIdx}, Km:{kmIdx}, Time:{timeIdx}, Pace:{paceIdx}");
+            // Heuristic to find the best table: look for columns
+            int nameIdx = -1, kmIdx = -1, timeIdx = -1, paceIdx = -1;
+            
+            // Try to find the header row via <thead> or first <tr> with <th>
+            var headerMatch = Regex.Match(tableHtml, @"<thead[^>]*>(.*?)<\/thead>", RegexOptions.Singleline);
+            string headerContent = headerMatch.Success ? headerMatch.Groups[1].Value : tableHtml;
+            
+            var headerCells = Regex.Matches(headerContent, @"<(th|td)[^>]*>(.*?)<\/\1>", RegexOptions.Singleline);
+            for (int i = 0; i < headerCells.Count; i++) {
+                var hText = Clean(headerCells[i].Groups[2].Value).ToLower();
+                
+                // Prioritize "Mérőpont" for name
+                if (hText.Contains("mérőpont") || hText.Contains("pont")) nameIdx = i;
+                // Prioritize "Táv" for distance
+                else if (hText.Contains("táv") || hText.Contains("km")) kmIdx = i;
+                // Prioritize "Versenyidő" for race time, avoiding "Áthaladás" (Time of Day)
+                else if (hText.Contains("versenyidő")) timeIdx = i;
+                else if (timeIdx == -1 && hText.Contains("idő")) timeIdx = i;
+                // Prioritize "Tempó" for pace
+                else if (hText.Contains("tempó") || hText.Contains("pace")) paceIdx = i;
             }
+
+            // Fallback for RunTiming standard if header detection failed to be specific
+            if (nameIdx == -1) nameIdx = 0;
+            if (kmIdx == -1) kmIdx = 1;
+            if (timeIdx == -1) timeIdx = 3;
+            if (paceIdx == -1) paceIdx = 4;
+
+            logs.Add($"HEURISTIC: Testing Columns -> Name:{nameIdx}, Km:{kmIdx}, Time:{timeIdx}, Pace:{paceIdx}");
 
             var rows = Regex.Matches(tableHtml, @"<tr[^>]*>(.*?)<\/tr>", RegexOptions.Singleline);
             foreach (Match row in rows) {
                 var cells = Regex.Matches(row.Groups[1].Value, @"<td[^>]*>(.*?)<\/td>", RegexOptions.Singleline);
                 if (cells.Count > Math.Max(nameIdx, Math.Max(kmIdx, Math.Max(timeIdx, paceIdx)))) {
                     var name = Clean(cells[nameIdx].Groups[1].Value);
-                    var kmStr = Clean(cells[kmIdx].Groups[1].Value).Replace(",", ".");
+                    var kmRaw = Clean(cells[kmIdx].Groups[1].Value);
+                    var kmStr = kmRaw.Replace(",", ".");
                     var time = Clean(cells[timeIdx].Groups[1].Value);
                     var pace = Clean(cells[paceIdx].Groups[1].Value);
                     
+                    // Validation: must have a valid time format (HH:mm:ss or mm:ss) and distance
                     if (double.TryParse(kmStr, out double km) && km > 0 && !string.IsNullOrEmpty(time) && time.Contains(":")) {
                         results.Add(new RaceCheckpoint(name, km, time, pace));
                     }
                 }
             }
-            if (results.Count > 0) break;
+
+            if (results.Count > 0) {
+                logs.Add($"SUCCESS: Found {results.Count} data rows in this table.");
+                break; // Use the first table that yields results
+            }
         }
         
-        logs.Add($"SCRAPER: Valid Checkpoints Found: {results.Count}");
+        logs.Add($"SCRAPER_FINAL: Identified {results.Count} valid checkpoints.");
         return (results.OrderBy(c => c.DistanceKm).ToList(), logs);
     }
 
@@ -378,11 +400,11 @@ Return Markdown coaching strategy.";
                 var aiText = aiRes.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString();
                 if (!string.IsNullOrEmpty(aiText)) {
                     client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-                    await client.PostAsJsonAsync("https://www.strava.com/api/v3/activities", new { name = $"[StravAI] STRATEGY: {customRace?.Name ?? "Plan"}", type = "Workout", start_date_local = DateTime.UtcNow.ToString("O"), elapsed_time = 1, description = aiText, @private = true });
+                    await client.PostAsJsonAsync("https://www.strava.com/api/v3/activities", new { name = $"[StravAI] STRATEGY: {customRace?.Name ?? \"Plan\"}", type = "Workout", start_date_local = DateTime.UtcNow.ToString("O"), elapsed_time = 1, description = aiText, @private = true });
                     L("Season Strategy successfully published to Strava.", "SUCCESS");
                 }
             } else {
-                L($"Gemini API Error: {geminiRes.StatusCode}", "ERROR");
+                L($"Gemini API Error: {geminiRes.StatusCode}", \"ERROR\");
             }
         } catch (Exception ex) { L($"Season Analysis Crash: {ex.Message}", "ERROR"); }
     }
