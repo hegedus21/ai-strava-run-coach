@@ -4,12 +4,13 @@ using System.Net.Http.Headers;
 using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Runtime.InteropServices;
+using System.Text.RegularExpressions;
 
 var builder = WebApplication.CreateBuilder(args);
 
 // Port configuration
 var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
-builder.WebHost.UseUrls($"http://*:{port}");
+builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
 
 builder.Services.AddHttpClient("", client => {
     client.Timeout = TimeSpan.FromMinutes(5);
@@ -19,7 +20,9 @@ builder.Services.AddCors(options => options.AddPolicy("AllowAll", p => p.AllowAn
 
 var logs = new ConcurrentQueue<string>();
 builder.Services.AddSingleton(logs);
+builder.Services.AddSingleton<RaceTrackerManager>();
 builder.Services.AddHostedService<SeasonBackgroundWorker>();
+builder.Services.AddHostedService<RacePollingWorker>();
 
 var app = builder.Build();
 app.UseCors("AllowAll");
@@ -81,163 +84,261 @@ string CompactSummarize(List<JsonElement> activities) {
     return sb.ToString();
 }
 
-// --- Security Middleware (For UI Commands) ---
+// --- Security Middleware ---
 app.Use(async (context, next) => {
     var path = context.Request.Path.Value ?? "";
-    
-    // PUBLIC EXEMPTIONS
-    if (path == "/" || path == "/health" || path.StartsWith("/webhook")) {
+    if (path == "/" || path == "/health" || path.StartsWith("/webhook", StringComparison.OrdinalIgnoreCase) || path.StartsWith("/race/test-parse", StringComparison.OrdinalIgnoreCase)) {
         await next();
         return;
     }
-
-    // Command routes (/logs, /sync, etc) require BACKEND_SECRET
     var expectedSecret = GetEnv("BACKEND_SECRET");
-    if (string.IsNullOrEmpty(expectedSecret)) expectedSecret = GetEnv("STRAVA_VERIFY_TOKEN"); // Fallback
-
+    if (string.IsNullOrEmpty(expectedSecret)) expectedSecret = GetEnv("STRAVA_VERIFY_TOKEN");
+    
     if (string.IsNullOrEmpty(expectedSecret)) {
         context.Response.StatusCode = 500;
         await context.Response.WriteAsync("SERVER_ERROR: Auth credentials not configured on host.");
         return;
     }
-
+    
     if (!context.Request.Headers.TryGetValue("X-StravAI-Secret", out var receivedSecret) || receivedSecret != expectedSecret) {
         context.Response.StatusCode = 401;
         await context.Response.WriteAsync("UNAUTHORIZED: Invalid access token.");
         return;
     }
-
     await next();
 });
 
 // --- Routes ---
 
-app.MapGet("/", () => "StravAI Engine v1.3.0_ULTRA_STABLE is Online.");
-app.MapGet("/health", () => Results.Ok(new { status = "healthy", version = "1.3.0_ULTRA_STABLE" }));
+app.MapGet("/", () => "StravAI Engine v1.4.5_STABLE is Online.");
+app.MapGet("/health", () => Results.Ok(new { status = "healthy", version = "1.4.5" }));
 app.MapGet("/logs", () => Results.Ok(logs.ToArray()));
 
-app.MapPost("/sync", (IHttpClientFactory clientFactory) => {
-    AddLog("AUTH_ACTION: Starting Intelligent Batch Sync...");
-    _ = Task.Run(async () => {
-        try {
-            using var client = clientFactory.CreateClient();
-            var token = await SeasonStrategyEngine.GetStravaAccessToken(client, GetEnv);
-            if (token == null) return;
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            var history = await client.GetFromJsonAsync<List<JsonElement>>("https://www.strava.com/api/v3/athlete/activities?per_page=20");
-            foreach (var act in history ?? new()) {
-                if (act.TryGetProperty("id", out var id)) {
-                    await ProcessActivityAsync(id.GetInt64(), clientFactory, GetEnv, AddLog, GetCetTimestamp, false);
-                }
-            }
-            AddLog("Batch Sync Cycle Completed.", "SUCCESS");
-        } catch (Exception ex) { AddLog($"Batch Sync Error: {ex.Message}", "ERROR"); }
-    });
-    return Results.Accepted();
-});
+app.MapGet("/race/test-parse", () => Results.Ok(new { status = "Ready", methods = "POST", hint = "Send JSON via POST" }));
 
-app.MapPost("/sync/{id}", (long id, IHttpClientFactory clientFactory) => {
-    AddLog($"AUTH_ACTION: Manual Override for Activity {id}.");
-    _ = Task.Run(() => ProcessActivityAsync(id, clientFactory, GetEnv, AddLog, GetCetTimestamp, true));
-    return Results.Accepted();
-});
+app.MapPost("/race/test-parse", async ([FromBody] RaceTestRequest req, IHttpClientFactory clientFactory) => {
+    AddLog($"DIAG_ACTION: Scraper Request for {req.Url}");
+    var debugLogs = new List<string>();
+    try {
+        if (string.IsNullOrEmpty(req.Url)) return Results.BadRequest("URL is required.");
+        
+        using var client = clientFactory.CreateClient();
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36");
+        
+        debugLogs.Add($"FETCHING: {req.Url}");
+        var response = await client.GetAsync(req.Url);
+        
+        if (!response.IsSuccessStatusCode) {
+            debugLogs.Add($"NETWORK_ERROR: HTTP {(int)response.StatusCode} {response.StatusCode}");
+            return Results.Ok(new { success = false, count = 0, checkpoints = new List<RaceCheckpoint>(), debugLogs });
+        }
 
-app.MapPost("/sync/custom-race", ([FromBody] CustomRaceRequest req, IHttpClientFactory clientFactory) => {
-    AddLog($"AUTH_ACTION: Custom Race Analysis requested for '{req.Name}'.");
-    _ = Task.Run(() => SeasonStrategyEngine.ProcessSeasonAnalysisAsync(clientFactory, GetEnv, logs, GetCetTimestamp, CompactSummarize, req));
-    return Results.Accepted();
-});
-
-app.MapPost("/sync/season", (IHttpClientFactory clientFactory) => {
-    AddLog("AUTH_ACTION: Deep Season Strategy Update triggered.");
-    _ = Task.Run(() => SeasonStrategyEngine.ProcessSeasonAnalysisAsync(clientFactory, GetEnv, logs, GetCetTimestamp, CompactSummarize));
-    return Results.Accepted();
-});
-
-// --- WEBHOOK HANDLERS ---
-
-// Strava Handshake (Challenge)
-app.MapGet("/webhook", ([FromQuery(Name = "hub.mode")] string mode, [FromQuery(Name = "hub.challenge")] string challenge, [FromQuery(Name = "hub.verify_token")] string verifyToken) => {
-    var expectedToken = GetEnv("STRAVA_VERIFY_TOKEN");
-    if (string.IsNullOrEmpty(expectedToken)) expectedToken = GetEnv("BACKEND_SECRET"); // Fallback
-
-    if (mode == "subscribe" && verifyToken == expectedToken) {
-        AddLog("WEBHOOK_INIT: Strava Verification Handshake Successful.");
-        return Results.Ok(new { hub_challenge = challenge });
+        var html = await response.Content.ReadAsStringAsync();
+        debugLogs.Add($"SUCCESS: Content Received ({html.Length} bytes)");
+        
+        var (checkpoints, scraperLogs) = RaceScraper.ParseCheckpoints(html);
+        debugLogs.AddRange(scraperLogs);
+        
+        return Results.Ok(new { success = true, count = checkpoints.Count, checkpoints, debugLogs });
+    } catch (Exception ex) {
+        debugLogs.Add($"EXCEPTION: {ex.Message}");
+        return Results.Ok(new { success = false, count = 0, checkpoints = new List<RaceCheckpoint>(), debugLogs });
     }
-    
-    AddLog($"WEBHOOK_INIT_FAILED: Token Mismatch (Received: {verifyToken}).", "ERROR");
-    return Results.Unauthorized();
 });
 
-// Strava Event Intake
-app.MapPost("/webhook", ([FromBody] StravaWebhookEvent @event, IHttpClientFactory clientFactory) => {
-    if (@event.ObjectType == "activity") {
-        AddLog($"WEBHOOK_EVENT: New Activity detected (ID: {@event.ObjectId}). Queueing for analysis.");
-        _ = Task.Run(() => ProcessActivityAsync(@event.ObjectId, clientFactory, GetEnv, AddLog, GetCetTimestamp));
-    }
-    return Results.Ok();
+app.MapPost("/race/start", ([FromBody] LiveRaceConfig config, RaceTrackerManager tracker) => {
+    tracker.Start(config);
+    return Results.Ok(new { status = "Tracker Engaged" });
+});
+
+app.MapPost("/race/stop", (RaceTrackerManager tracker) => {
+    tracker.Stop();
+    return Results.Ok(new { status = "Tracker Disengaged" });
+});
+
+app.MapGet("/race/status", (RaceTrackerManager tracker) => Results.Ok(tracker.GetStatus()));
+
+// Fallback for debugging path issues
+app.MapFallback((HttpContext context) => {
+    return Results.NotFound(new { error = "Route Not Found", path = context.Request.Path.Value });
 });
 
 app.Run();
 
-// --- Core Logic ---
+// --- Logic Implementation ---
 
-async Task ProcessActivityAsync(long id, IHttpClientFactory clientFactory, Func<string, string> envGetter, Action<string, string> logger, Func<string> timeGetter, bool force = false) {
-    try {
-        using var client = clientFactory.CreateClient();
-        var token = await SeasonStrategyEngine.GetStravaAccessToken(client, envGetter);
-        if (token == null) return;
-        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+public static class RaceScraper {
+    public static (List<RaceCheckpoint> Checkpoints, List<string> Logs) ParseCheckpoints(string html) {
+        var results = new List<RaceCheckpoint>();
+        var logs = new List<string>();
         
-        var act = await client.GetFromJsonAsync<JsonElement>($"https://www.strava.com/api/v3/activities/{id}");
-        
-        if (!force) {
-            string description = act.TryGetProperty("description", out var descProp) && descProp.ValueKind == JsonValueKind.String 
-                ? descProp.GetString() ?? "" 
-                : "";
+        var tables = Regex.Matches(html, @"<table[^>]*>(.*?)<\/table>", RegexOptions.Singleline);
+        logs.Add($"Found {tables.Count} table(s) in HTML.");
+
+        foreach (Match table in tables) {
+            var tableHtml = table.Groups[1].Value;
+            int nameIdx = 0, kmIdx = 1, timeIdx = 3, paceIdx = 4;
             
-            if (description.Contains("StravAI Report") || description.Contains("[StravAI-Processed]") || description.Contains("StravAI-Processed")) {
-                 logger($"Activity {id} already analyzed. Skipping to save tokens.", "INFO");
-                 return;
+            var headerRow = Regex.Match(tableHtml, @"<tr[^>]*>(.*?)<\/tr>", RegexOptions.Singleline);
+            if (headerRow.Success) {
+                var headers = Regex.Matches(headerRow.Groups[1].Value, @"<(th|td)[^>]*>(.*?)<\/\1>", RegexOptions.Singleline);
+                for (int i = 0; i < headers.Count; i++) {
+                    var hText = Clean(headers[i].Groups[2].Value).ToLower();
+                    if (hText.Contains("mérőpont") || hText.Contains("pont")) nameIdx = i;
+                    else if (hText.Contains("táv") || hText.Contains("km")) kmIdx = i;
+                    else if (hText.Contains("idő") || hText.Contains("versenyidő")) timeIdx = i;
+                    else if (hText.Contains("tempó") || hText.Contains("pace")) paceIdx = i;
+                }
+                logs.Add($"HEURISTIC: Columns Identified -> Name:{nameIdx}, Km:{kmIdx}, Time:{timeIdx}, Pace:{paceIdx}");
             }
+
+            var rows = Regex.Matches(tableHtml, @"<tr[^>]*>(.*?)<\/tr>", RegexOptions.Singleline);
+            foreach (Match row in rows) {
+                var cells = Regex.Matches(row.Groups[1].Value, @"<td[^>]*>(.*?)<\/td>", RegexOptions.Singleline);
+                if (cells.Count > Math.Max(nameIdx, Math.Max(kmIdx, Math.Max(timeIdx, paceIdx)))) {
+                    var name = Clean(cells[nameIdx].Groups[1].Value);
+                    var kmStr = Clean(cells[kmIdx].Groups[1].Value).Replace(",", ".");
+                    var time = Clean(cells[timeIdx].Groups[1].Value);
+                    var pace = Clean(cells[paceIdx].Groups[1].Value);
+                    
+                    if (double.TryParse(kmStr, out double km) && km > 0 && !string.IsNullOrEmpty(time) && time.Contains(":")) {
+                        results.Add(new RaceCheckpoint(name, km, time, pace));
+                    }
+                }
+            }
+            if (results.Count > 0) break;
         }
-
-        var history = await client.GetFromJsonAsync<List<JsonElement>>("https://www.strava.com/api/v3/athlete/activities?per_page=10");
-        var histSummary = "";
-        foreach (var h in history ?? new()) {
-            var date = h.GetProperty("start_date").GetString();
-            var dist = h.GetProperty("distance").GetDouble() / 1000;
-            var speed = h.GetProperty("average_speed").GetDouble();
-            var pace = speed > 0 ? (16.6667 / speed) : 0;
-            histSummary += $"- {date}: {dist:F1}km @ {pace:F2}m/k\n";
-        }
-
-        client.DefaultRequestHeaders.Authorization = null; 
-        var prompt = $"ROLE: Master Performance Running Coach. GOAL: {envGetter("GOAL_RACE_TYPE")} on {envGetter("GOAL_RACE_DATE")}.\n" +
-                     $"TASK: Analyze this workout: {act.GetRawText()}.\n" +
-                     $"HISTORY SUMMARY:\n{histSummary}\n\n" +
-                     "INSTRUCTION: Return Markdown with Summary, Race Readiness %, T-Minus, Next Week Focus, and Next Training Step. Be analytical and encouraging.";
-
-        var apiKey = envGetter("API_KEY");
-        var geminiRes = await client.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={apiKey}", new { contents = new[] { new { parts = new[] { new { text = prompt } } } } });
         
-        if (geminiRes.IsSuccessStatusCode) {
-            var aiRes = await geminiRes.Content.ReadFromJsonAsync<JsonElement>();
-            var aiText = aiRes.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString();
-            var desc = (act.TryGetProperty("description", out var d) ? d.GetString() : "") + $"\n\n--- StravAI Report ---\n{aiText}\n\nProcessed: {timeGetter()}";
-            
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-            await client.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{id}", new { description = desc });
-            logger($"Activity {id} analysis successfully appended.", "SUCCESS");
-        } else {
-            var err = await geminiRes.Content.ReadAsStringAsync();
-            logger($"Gemini Error ({geminiRes.StatusCode}): {err}", "ERROR");
-        }
-    } catch (Exception ex) { logger($"Logic Error for {id}: {ex.Message}", "ERROR"); }
+        logs.Add($"SCRAPER: Valid Checkpoints Found: {results.Count}");
+        return (results.OrderBy(c => c.DistanceKm).ToList(), logs);
+    }
+
+    private static string Clean(string html) => Regex.Replace(html, "<.*?>", "").Trim();
 }
 
-public record CustomRaceRequest(string Name, string Distance, string Date, string TargetTime, string? RaceDetails);
+public class RaceTrackerManager {
+    private LiveRaceConfig? _config;
+    private RaceCheckpoint? _lastCheckpoint;
+    private int _checkpointsFound = 0;
+    private string _lastUpdate = "NEVER";
+    private string? _latestAdvice;
+    private bool _isActive = false;
+
+    public void Start(LiveRaceConfig config) { _config = config; _isActive = true; _lastUpdate = DateTime.UtcNow.ToString("O"); }
+    public void Stop() { _isActive = false; }
+    public LiveRaceStatus GetStatus() => new LiveRaceStatus(_isActive, _lastCheckpoint, _checkpointsFound, _lastUpdate, _latestAdvice);
+    public LiveRaceConfig? GetConfig() => _config;
+    public void UpdateCheckpoint(RaceCheckpoint cp, string? advice) {
+        _lastCheckpoint = cp;
+        _checkpointsFound++;
+        _lastUpdate = DateTime.UtcNow.ToString("O");
+        _latestAdvice = advice;
+    }
+}
+
+public class RacePollingWorker : BackgroundService {
+    private readonly RaceTrackerManager _tracker;
+    private readonly IHttpClientFactory _cf;
+    private readonly ConcurrentQueue<string> _logs;
+    private readonly IConfiguration _cfg;
+
+    public RacePollingWorker(RaceTrackerManager tracker, IHttpClientFactory cf, ConcurrentQueue<string> logs, IConfiguration cfg) {
+        _tracker = tracker; _cf = cf; _logs = logs; _cfg = cfg;
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken ct) {
+        while (!ct.IsCancellationRequested) {
+            var status = _tracker.GetStatus();
+            if (status.IsActive) {
+                var config = _tracker.GetConfig();
+                if (config != null) await PollRaceAsync(config);
+            }
+            await Task.Delay(TimeSpan.FromMinutes(2), ct);
+        }
+    }
+
+    private async Task PollRaceAsync(LiveRaceConfig config) {
+        try {
+            using var client = _cf.CreateClient();
+            client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36");
+            
+            var response = await client.GetAsync(config.TimingUrl);
+            if (!response.IsSuccessStatusCode) return;
+
+            var html = await response.Content.ReadAsStringAsync();
+            var (checkpoints, _) = RaceScraper.ParseCheckpoints(html);
+            
+            if (checkpoints.Count > 0) {
+                var latest = checkpoints.Last();
+                var currentStatus = _tracker.GetStatus();
+                
+                if (currentStatus.LastCheckpoint == null || currentStatus.LastCheckpoint.Name != latest.Name) {
+                    _logs.Enqueue($"[{DateTime.UtcNow:HH:mm:ss}] [RACE] New Checkpoint Detected: {latest.Name} ({latest.DistanceKm}km)");
+                    var advice = await GetAIAdvice(latest, config);
+                    await SendTelegramMessage(config, latest, advice);
+                    _tracker.UpdateCheckpoint(latest, advice);
+                }
+            }
+        } catch (Exception ex) {
+            _logs.Enqueue($"[{DateTime.UtcNow:HH:mm:ss}] [ERROR] Race Polling Failed: {ex.Message}");
+        }
+    }
+
+    private async Task<string> GetAIAdvice(RaceCheckpoint cp, LiveRaceConfig config) {
+        try {
+            using var client = _cf.CreateClient();
+            var apiKey = Environment.GetEnvironmentVariable("GEMINI_API_KEY") ?? _cfg["API_KEY"];
+            var prompt = $@"ROLE: Elite Ultra Running Coach (mid-race strategist).
+EVENT: {config.RaceName} ({config.TotalDistance}km).
+TARGET PACE: {config.TargetPace}.
+CURRENT TELEMETRY:
+- Checkpoint: {cp.Name}
+- Total Distance: {cp.DistanceKm}km
+- Current Split Pace: {cp.Pace}
+- Elapsed/Clock Time: {cp.Time}
+
+CONTEXT: Athlete is exhausted but mentally strong.
+TASK: Provide short, punchy, actionable advice (2-3 sentences max). Focus on hydration, pace management, and morale. 
+Do not be verbose. Be the voice in their ear.";
+
+            var payload = new { contents = new[] { new { parts = new[] { new { text = prompt } } } } };
+            var res = await client.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={apiKey}", payload);
+            if (res.IsSuccessStatusCode) {
+                var json = await res.Content.ReadFromJsonAsync<JsonElement>();
+                return json.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString() ?? "...";
+            }
+        } catch { }
+        return "Steady progress. Focus on your breathing and fuel well at the next aid station.";
+    }
+
+    private async Task SendTelegramMessage(LiveRaceConfig config, RaceCheckpoint cp, string advice) {
+        try {
+            using var client = _cf.CreateClient();
+            var text = $"🏃‍♂️ *Checkpoint Reached: {cp.Name}*\n" +
+                       $"📍 Distance: {cp.DistanceKm}km\n" +
+                       $"⏱ Time: {cp.Time}\n" +
+                       $"⚡️ Pace: {cp.Pace}\n\n" +
+                       $"🤖 *Coach Advice:*\n{advice}";
+            
+            var url = $"https://api.telegram.org/bot{config.TelegramBotToken}/sendMessage";
+            await client.PostAsJsonAsync(url, new { chat_id = config.TelegramChatId, text = text, parse_mode = "Markdown" });
+        } catch (Exception ex) {
+            _logs.Enqueue($"[{DateTime.UtcNow:HH:mm:ss}] [ERROR] Telegram Push Failed: {ex.Message}");
+        }
+    }
+}
+
+public class SeasonBackgroundWorker : BackgroundService {
+    private readonly IHttpClientFactory _cf;
+    private readonly ConcurrentQueue<string> _l;
+    private readonly IConfiguration _cfg;
+    public SeasonBackgroundWorker(IHttpClientFactory cf, ConcurrentQueue<string> l, IConfiguration cfg) { _cf = cf; _l = l; _cfg = cfg; }
+    protected override async Task ExecuteAsync(CancellationToken ct) {
+        while (!ct.IsCancellationRequested) {
+            await Task.Delay(TimeSpan.FromHours(1), ct);
+        }
+    }
+}
 
 public static class SeasonStrategyEngine {
     public static async Task<string?> GetStravaAccessToken(HttpClient client, Func<string, string> envGetter) {
@@ -253,96 +354,11 @@ public static class SeasonStrategyEngine {
             return data.GetProperty("access_token").GetString();
         } catch { return null; }
     }
-
-    public static async Task ProcessSeasonAnalysisAsync(IHttpClientFactory clientFactory, Func<string, string> envGetter, ConcurrentQueue<string> logs, Func<string> timeGetter, Func<List<JsonElement>, string> summarizer, CustomRaceRequest? customRace = null) {
-        void L(string m, string lvl = "INFO") => logs.Enqueue($"[{DateTime.UtcNow:HH:mm:ss}] [{lvl}] {m}");
-
-        try {
-            using var client = clientFactory.CreateClient();
-            var token = await GetStravaAccessToken(client, envGetter);
-            if (token == null) { L("Auth Failed", "ERROR"); return; }
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-
-            L("Gathering Multi-Month Performance Trends...");
-            var historyData = await client.GetFromJsonAsync<List<JsonElement>>("https://www.strava.com/api/v3/athlete/activities?per_page=200");
-            var historySummary = summarizer(historyData ?? new());
-
-            client.DefaultRequestHeaders.Authorization = null;
-
-            var prompt = $@"ATHLETE GOAL: {(customRace?.Name ?? envGetter("GOAL_RACE_TYPE"))} on {(customRace?.Date ?? envGetter("GOAL_RACE_DATE"))} (Target Time: {(customRace?.TargetTime ?? envGetter("GOAL_RACE_TIME"))}).
-HISTORY CONTEXT (FULL SEASON SCAN):
-{historySummary}
-
-RACE SPECIFICS:
-{ (customRace?.RaceDetails ?? "N/A") }
-
-TASK: Deep Season Strategy. Include:
-1. EXECUTIVE SUMMARY
-2. FEASIBILITY (FTP/Aerobic Base + PROBABILITY %)
-3. 3-TIER PACE STRATEGY (Optimistic/Realistic/Pessimistic)
-4. NUTRITION & LOGISTICS
-5. ACTION PLAN (Next 7 Days)
-
-INSTRUCTION: Professional coaching tone. Markdown. Footer processed stamp: {timeGetter()}";
-
-            var apiKey = envGetter("API_KEY");
-            var geminiRes = await client.PostAsJsonAsync($"https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key={apiKey}", new { contents = new[] { new { parts = new[] { new { text = prompt } } } } });
-            
-            if (geminiRes.IsSuccessStatusCode) {
-                var aiRes = await geminiRes.Content.ReadFromJsonAsync<JsonElement>();
-                var aiText = aiRes.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString();
-                string finalDesc = $"{aiText}\n\nProcessed: {timeGetter()}";
-
-                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
-                string targetTitle = $"[StravAI] STRATEGY: {(customRace?.Name ?? "Full Season Plan")}";
-                
-                var recent = await client.GetFromJsonAsync<List<JsonElement>>("https://www.strava.com/api/v3/athlete/activities?per_page=50");
-                JsonElement? existing = null;
-                foreach (var a in recent ?? new()) {
-                    if (a.TryGetProperty("name", out var nameProp) && nameProp.ValueKind == JsonValueKind.String && nameProp.GetString() == targetTitle) {
-                        existing = a;
-                        break;
-                    }
-                }
-
-                if (existing.HasValue && existing.Value.TryGetProperty("id", out var eid)) {
-                    L($"Updating Existing Strategy activity: {eid.GetInt64()}");
-                    await client.PutAsJsonAsync($"https://www.strava.com/api/v3/activities/{eid.GetInt64()}", new { description = finalDesc, @private = true });
-                    L($"{targetTitle} successfully updated.", "SUCCESS"); 
-                } else {
-                    L("No matching strategy activity found. Creating new entry.");
-                    await client.PostAsJsonAsync("https://www.strava.com/api/v3/activities", new {
-                        name = targetTitle,
-                        type = "Workout",
-                        start_date_local = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ"),
-                        elapsed_time = 1,
-                        description = finalDesc,
-                        @private = true
-                    });
-                    L($"{targetTitle} deployed as new Private Activity.", "SUCCESS");
-                }
-            } else {
-                var err = await geminiRes.Content.ReadAsStringAsync();
-                L($"AI API Error: {err}", "ERROR");
-            }
-        } catch (Exception ex) { L($"Season Analysis Crash: {ex.Message}", "ERROR"); }
-    }
 }
 
-public class SeasonBackgroundWorker : BackgroundService {
-    private readonly IHttpClientFactory _cf;
-    private readonly ConcurrentQueue<string> _l;
-    private readonly IConfiguration _cfg;
-    public SeasonBackgroundWorker(IHttpClientFactory cf, ConcurrentQueue<string> l, IConfiguration cfg) { _cf = cf; _l = l; _cfg = cfg; }
-    protected override async Task ExecuteAsync(CancellationToken ct) {
-        while (!ct.IsCancellationRequested) {
-            var now = DateTime.UtcNow;
-            if (now.DayOfWeek == DayOfWeek.Sunday && now.Hour == 2) {
-                await SeasonStrategyEngine.ProcessSeasonAnalysisAsync(_cf, k => Environment.GetEnvironmentVariable(k) ?? _cfg[k] ?? "", _l, () => DateTime.UtcNow.ToString("G"), (list) => "Automated Sunday Update");
-            }
-            await Task.Delay(TimeSpan.FromHours(1), ct);
-        }
-    }
-}
-
+public record RaceTestRequest([property: JsonPropertyName("url")] string Url);
+public record CustomRaceRequest(string Name, string Distance, string Date, string TargetTime, string? RaceDetails);
+public record RaceCheckpoint(string Name, double DistanceKm, string Time, string Pace);
+public record LiveRaceConfig(string TimingUrl, string TelegramBotToken, string TelegramChatId, string TargetPace, string RaceName, double TotalDistance);
+public record LiveRaceStatus(bool IsActive, RaceCheckpoint? LastCheckpoint, int CheckpointsFound, string LastUpdate, string? LatestAdvice);
 public record StravaWebhookEvent([property: JsonPropertyName("object_id")] long ObjectId, [property: JsonPropertyName("object_type")] string ObjectType);
