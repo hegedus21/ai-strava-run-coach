@@ -9,7 +9,7 @@ using System.Text.RegularExpressions;
 var builder = WebApplication.CreateBuilder(args);
 
 // Port configuration
-var port = Environment.GetVariable("PORT") ?? "8080";
+var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
 builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
 
 builder.Services.AddHttpClient("", client => {
@@ -73,8 +73,8 @@ app.Use(async (context, next) => {
 
 // --- Routes ---
 
-app.MapGet("/", () => "StravAI Engine v1.5.1_DIAGNOSTIC is Online.");
-app.MapGet("/health", () => Results.Ok(new { status = "healthy", version = "1.5.1" }));
+app.MapGet("/", () => "StravAI Engine v1.5.2_STABLE is Online.");
+app.MapGet("/health", () => Results.Ok(new { status = "healthy", version = "1.5.2" }));
 app.MapGet("/logs", () => Results.Ok(logs.ToArray()));
 
 app.MapGet("/race/test-parse", () => Results.Ok(new { status = "Ready", methods = "POST", hint = "Send JSON via POST" }));
@@ -88,24 +88,23 @@ app.MapPost("/race/test-parse", async ([FromBody] RaceTestRequest req, IHttpClie
         using var client = clientFactory.CreateClient();
         client.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36");
         
-        debugLogs.Add($"STEP_1: Fetching HTML content from: {req.Url}");
+        debugLogs.Add($"FETCHING_URL: {req.Url}");
         var response = await client.GetAsync(req.Url);
         
         if (!response.IsSuccessStatusCode) {
-            debugLogs.Add($"CRITICAL_ERROR: Site returned HTTP {(int)response.StatusCode} ({response.StatusCode})");
+            debugLogs.Add($"HTTP_ERROR: {(int)response.StatusCode} {response.StatusCode}");
             return Results.Ok(new { success = false, count = 0, checkpoints = new List<RaceCheckpoint>(), debugLogs });
         }
 
         var html = await response.Content.ReadAsStringAsync();
-        debugLogs.Add($"STEP_2: Content Received ({html.Length} bytes). Proceeding to regex extraction.");
+        debugLogs.Add($"FETCH_SUCCESS: Received {html.Length} bytes of HTML.");
         
         var (checkpoints, scraperLogs) = RaceScraper.ParseCheckpoints(html);
         debugLogs.AddRange(scraperLogs);
         
         return Results.Ok(new { success = true, count = checkpoints.Count, checkpoints, debugLogs });
     } catch (Exception ex) {
-        debugLogs.Add($"CRITICAL_EXCEPTION: {ex.Message}");
-        debugLogs.Add($"STACK_TRACE: {ex.StackTrace?.Substring(0, Math.Min(200, ex.StackTrace.Length))}");
+        debugLogs.Add($"FATAL_EXCEPTION: {ex.Message}");
         return Results.Ok(new { success = false, count = 0, checkpoints = new List<RaceCheckpoint>(), debugLogs });
     }
 });
@@ -136,18 +135,17 @@ public static class RaceScraper {
         var results = new List<RaceCheckpoint>();
         var logs = new List<string>();
         
-        // Find all table blocks
         var tables = Regex.Matches(html, @"<table[^>]*>(.*?)<\/table>", RegexOptions.Singleline);
-        logs.Add($"SCRAPER_LOG: Identified {tables.Count} tables in document.");
+        logs.Add($"DOM_ANALYSIS: Found {tables.Count} table(s). Scanning for result telemetry...");
 
-        int tableIdx = 0;
+        int tableCounter = 0;
         foreach (Match table in tables) {
-            tableIdx++;
+            tableCounter++;
             var tableHtml = table.Groups[1].Value;
-            logs.Add($"--- ANALYZING TABLE {tableIdx} ---");
+            logs.Add($"SCANNING_TABLE_{tableCounter}: Length {tableHtml.Length} chars.");
             
-            // 1. Identify Headers
             int nameIdx = -1, kmIdx = -1, timeIdx = -1, paceIdx = -1;
+            
             var headerMatch = Regex.Match(tableHtml, @"<thead[^>]*>(.*?)<\/thead>", RegexOptions.Singleline);
             string headerContent = headerMatch.Success ? headerMatch.Groups[1].Value : tableHtml;
             
@@ -156,80 +154,59 @@ public static class RaceScraper {
 
             for (int i = 0; i < headerCells.Count; i++) {
                 var hText = Clean(headerCells[i].Groups[2].Value).ToLower();
-                headersFound.Add($"[{i}]: {hText}");
-
-                if (hText.Contains("mérőpont") || hText.Contains("pont")) nameIdx = i;
+                headersFound.Add(hText);
+                
+                if (hText.Contains("mérőpont")) nameIdx = i;
                 else if (hText.Contains("táv") || hText.Contains("km")) {
-                    if (kmIdx == -1) kmIdx = i; // Take first one
+                    if (kmIdx == -1) kmIdx = i;
                 }
                 else if (hText.Contains("versenyidő")) timeIdx = i;
-                else if (timeIdx == -1 && hText.Contains("idő")) timeIdx = i; // Secondary match
+                else if (timeIdx == -1 && hText.Contains("idő")) timeIdx = i;
                 else if (hText.Contains("tempó") || hText.Contains("pace")) paceIdx = i;
             }
 
-            logs.Add($"HEADERS_DISCOVERED: {string.Join(" | ", headersFound)}");
+            logs.Add($"HEADERS_IDENTIFIED: [{string.Join(" | ", headersFound)}]");
 
-            // 2. Validate Heuristic Confidence
+            // Fallback for RunTiming if header detection is ambiguous
             if (nameIdx == -1 || kmIdx == -1 || timeIdx == -1) {
-                logs.Add($"WARNING: Heuristic failed to map all required columns. Missing: {(nameIdx == -1 ? "Name " : "")}{(kmIdx == -1 ? "Km " : "")}{(timeIdx == -1 ? "Time " : "")}");
-                logs.Add("FALLBACK: Applying high-confidence RunTiming individual layout defaults (Name=1, Km=2, Time=4, Pace=5)");
+                logs.Add($"MAPPING_WARNING: Heuristic failed to map all columns. Falling back to default RunTiming indices.");
                 nameIdx = 1; kmIdx = 2; timeIdx = 4; paceIdx = 5;
-            } else {
-                logs.Add($"SUCCESS: Heuristic mapping confirmed -> Name:{nameIdx}, Km:{kmIdx}, Time:{timeIdx}, Pace:{paceIdx}");
             }
+            
+            logs.Add($"FINAL_MAPPING: Name->Col[{nameIdx}], Km->Col[{kmIdx}], Time->Col[{timeIdx}], Pace->Col[{paceIdx}]");
 
-            // 3. Process Rows
             var rows = Regex.Matches(tableHtml, @"<tr[^>]*>(.*?)<\/tr>", RegexOptions.Singleline);
-            logs.Add($"DEBUG: Found {rows.Count} total rows in Table {tableIdx}.");
-
-            int validRows = 0;
+            int rowCount = 0;
             foreach (Match row in rows) {
                 var cells = Regex.Matches(row.Groups[1].Value, @"<td[^>]*>(.*?)<\/td>", RegexOptions.Singleline);
-                if (cells.Count == 0) continue; // Likely header row or empty
-
-                if (cells.Count <= Math.Max(nameIdx, Math.Max(kmIdx, Math.Max(timeIdx, paceIdx)))) {
-                    // Skip rows that don't have enough columns for our detected mapping
-                    continue;
-                }
-
-                try {
-                    var name = Clean(cells[nameIdx].Groups[1].Value);
-                    var kmStrRaw = Clean(cells[kmIdx].Groups[1].Value);
-                    var kmStr = Regex.Replace(kmStrRaw, "[^0-9,.]", "").Replace(",", ".");
-                    var time = Clean(cells[timeIdx].Groups[1].Value);
-                    var pace = Clean(cells[paceIdx].Groups[1].Value);
-                    
-                    // Validation criteria:
-                    // - Distance must be a number
-                    // - Time must contain a colon (standard time format)
-                    if (double.TryParse(kmStr, out double km) && !string.IsNullOrEmpty(time) && time.Contains(":")) {
-                        results.Add(new RaceCheckpoint(name, km, time, pace));
-                        validRows++;
-                    } else {
-                        // Optional: log why this specific row failed validation
-                        if (name.Length > 0 && !name.ToLower().Contains("mérőpont")) {
-                             // logs.Add($"ROW_REJECTED: '{name}' | Km:'{kmStr}' | Time:'{time}' (Parse Fail or Validation Fail)");
+                if (cells.Count > Math.Max(nameIdx, Math.Max(kmIdx, timeIdx))) {
+                    try {
+                        var name = Clean(cells[nameIdx].Groups[1].Value);
+                        var kmStrRaw = Clean(cells[kmIdx].Groups[1].Value);
+                        var kmStr = Regex.Replace(kmStrRaw, "[^0-9,.]", "").Replace(",", ".");
+                        var time = Clean(cells[timeIdx].Groups[1].Value);
+                        var pace = Clean(cells[paceIdx < cells.Count ? paceIdx : 0].Groups[1].Value);
+                        
+                        if (double.TryParse(kmStr, out double km) && km >= 0 && !string.IsNullOrEmpty(time) && time.Contains(":")) {
+                            results.Add(new RaceCheckpoint(name, km, time, pace));
+                            rowCount++;
                         }
-                    }
-                } catch (Exception ex) {
-                    logs.Add($"ROW_EXCEPTION: {ex.Message} while processing a row.");
+                    } catch { }
                 }
             }
 
             if (results.Count > 0) {
-                logs.Add($"SUCCESS: Table {tableIdx} yielded {validRows} valid checkpoints.");
-                break; // Stop at first table that produces results
+                logs.Add($"SCRAPE_SUCCESS: Extracted {rowCount} valid data points from Table {tableCounter}.");
+                break;
             } else {
-                logs.Add($"FAILURE: Table {tableIdx} yielded 0 valid rows.");
+                logs.Add($"TABLE_SKIP: Table {tableCounter} contained no valid result rows matching criteria.");
             }
         }
         
         if (results.Count == 0) {
-            logs.Add("FINAL_STATE: SCRAPER FAILED to extract any data. Please verify the URL points to an individual athlete profile with a results table.");
-        } else {
-            logs.Add($"FINAL_STATE: Extracted {results.Count} checkpoints successfully.");
+            logs.Add("SCRAPE_FAILURE: 0 checkpoints found. The site might be using dynamic JS rendering or a different table structure.");
         }
-
+        
         return (results.OrderBy(c => c.DistanceKm).ToList(), logs);
     }
 
@@ -320,7 +297,7 @@ Provide 2 sentences of tactical coaching advice for the runner.";
                 return json.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString() ?? "...";
             }
         } catch { }
-        return "Steady progress. Stay hydrated and focus on your breathing.";
+        return "Steady progress. Stay hydrated and stick to your fueling plan.";
     }
 
     private async Task SendTelegramMessage(LiveRaceConfig config, RaceCheckpoint cp, string advice) {
