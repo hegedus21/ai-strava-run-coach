@@ -98,16 +98,18 @@ const App: React.FC = () => {
         const data = await res.json();
         setTestResults({ checkpoints: data.checkpoints, logs: data.debugLogs || [] });
         if (data.success && data.count > 0) {
-           addLocalLog(`Scraper Test: SUCCESS. Identified ${data.count} checkpoints.`, "success");
+           addLocalLog(`Scraper Test: SUCCESS. Found ${data.count} checkpoints.`, "success");
+           // Explicitly log distances and arrival times
            data.checkpoints.forEach((cp: RaceCheckpoint) => {
-             addLocalLog(` >> CP_DETECTED: [${cp.distanceKm.toFixed(2)}km] ${cp.name} | ARRIVAL: ${cp.time}`, "info");
+             addLocalLog(`[DATA] CP: ${cp.name.padEnd(20)} | DIST: ${cp.distanceKm.toFixed(2)}km | ARRIVAL: ${cp.time}`, "info");
            });
         } else {
-           addLocalLog("Scraper Test: 0 data points found. The engine could not map any checkpoint rows.", "error");
+           addLocalLog("Scraper Test: 0 data points found. Scraper logic failed to identify valid rows.", "error");
         }
       } else {
+        const errText = await res.text();
         addLocalLog(`Scraper Test Error: ${res.status}`, "error");
-        setTestResults({ checkpoints: [], logs: [`FATAL_HTTP_ERROR: ${res.status}`, `HINT: Check if backend is Online and Program.cs built correctly.`] });
+        setTestResults({ checkpoints: [], logs: [`FATAL_HTTP_ERROR: ${res.status}`, `RAW: ${errText.substring(0, 100)}`] });
       }
     } catch (e: any) {
       addLocalLog(`Connection Failed: ${e.message}`, "error");
@@ -199,7 +201,7 @@ const App: React.FC = () => {
           <div>
             <h1 className="text-white font-black uppercase text-sm flex items-center gap-2">
               StravAI_Command
-              <span className="text-[10px] text-cyan-500 font-bold border border-cyan-500/20 px-1.5 rounded">v1.4.9_STABLE</span>
+              <span className="text-[10px] text-cyan-500 font-bold border border-cyan-500/20 px-1.5 rounded">v1.5.0_STABLE</span>
             </h1>
             <div className={`text-[9px] uppercase font-bold tracking-widest mt-0.5 ${backendStatus === 'ONLINE' ? 'text-cyan-400' : 'text-red-500'}`}>
               {backendStatus}
