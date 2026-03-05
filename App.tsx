@@ -17,6 +17,7 @@ const App: React.FC = () => {
   const [crTarget, setCrTarget] = useState('');
   const [crDetails, setCrDetails] = useState('');
   const [syncId, setSyncId] = useState('');
+  const [seasonQuestions, setSeasonQuestions] = useState('');
 
   const [validationErrors, setValidationErrors] = useState<ValidationError>({});
   const [backendLogs, setBackendLogs] = useState<string[]>([]);
@@ -113,7 +114,10 @@ const App: React.FC = () => {
         endpoint = `${cleanUrl}/sync/custom-race`;
         body = JSON.stringify({ Name: crName, Distance: '', Date: crDate, TargetTime: crTarget, RaceDetails: crDetails });
         break;
-      case 'SEASON': endpoint = `${cleanUrl}/sync/season`; break;
+      case 'SEASON':
+        endpoint = `${cleanUrl}/sync/season`;
+        body = seasonQuestions.trim() ? JSON.stringify({ questions: seasonQuestions }) : undefined;
+        break;
       case 'BATCH': endpoint = `${cleanUrl}/sync`; break;
       case 'ID': endpoint = `${cleanUrl}/sync/${syncId}`; break;
     }
@@ -254,6 +258,22 @@ const App: React.FC = () => {
           <section className="space-y-4">
             <h2 className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Operations</h2>
             <div className="space-y-2">
+
+                <div className="p-3 bg-slate-950 border border-slate-800 rounded-xl space-y-2">
+                  <label className="text-[9px] text-slate-500 uppercase font-bold">
+                      Questions for Season Analysis
+                  </label>
+                  <textarea
+                      rows={3}
+                      placeholder="e.g. Should I add a long run on Fridays? Am I overtraining?"
+                      value={seasonQuestions}
+                      onChange={e => setSeasonQuestions(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 
+                                 text-cyan-400 outline-none text-[10px] resize-none 
+                                 focus:border-cyan-500/30 placeholder:text-slate-700"
+                  />
+                </div>
+              
                <button onClick={() => handleSync('SEASON')} className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-slate-400 rounded-lg border border-slate-800 text-[9px] uppercase font-black transition-all">ANALYSE MAIN RACE</button>
                <button onClick={() => handleSync('BATCH')} className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-slate-400 rounded-lg border border-slate-800 text-[9px] uppercase font-black transition-all">ANALYSE RECENT ACTIVITIES</button>
             </div>
