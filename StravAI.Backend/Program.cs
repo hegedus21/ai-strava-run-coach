@@ -148,9 +148,11 @@ app.MapPost("/sync/custom-race", ([FromBody] CustomRaceRequest req, IHttpClientF
     return Results.Accepted();
 });
 
-app.MapPost("/sync/season", (IHttpClientFactory clientFactory) => {
+public record SeasonRequest(string? Questions);
+
+app.MapPost("/sync/season", ([FromBody] SeasonRequest? req, IHttpClientFactory clientFactory) => {
     AddLog("AUTH_ACTION: Deep Season Strategy Update triggered.");
-    _ = Task.Run(() => SeasonStrategyEngine.ProcessSeasonAnalysisAsync(clientFactory, GetEnv, logs, GetCetTimestamp, CompactSummarize));
+    _ = Task.Run(() => SeasonStrategyEngine.ProcessSeasonAnalysisAsync(clientFactory, GetEnv, logs, GetCetTimestamp, CompactSummarize, null, req?.Questions));
     return Results.Accepted();
 });
 
@@ -254,7 +256,7 @@ public static class SeasonStrategyEngine {
         } catch { return null; }
     }
 
-    public static async Task ProcessSeasonAnalysisAsync(IHttpClientFactory clientFactory, Func<string, string> envGetter, ConcurrentQueue<string> logs, Func<string> timeGetter, Func<List<JsonElement>, string> summarizer, CustomRaceRequest? customRace = null) {
+    public static async Task ProcessSeasonAnalysisAsync(IHttpClientFactory clientFactory, Func<string, string> envGetter, ConcurrentQueue<string> logs, Func<string> timeGetter, Func<List<JsonElement>, string> summarizer, CustomRaceRequest? customRace = null, string? athleteQuestions = null) {
         void L(string m, string lvl = "INFO") => logs.Enqueue($"[{DateTime.UtcNow:HH:mm:ss}] [{lvl}] {m}");
 
         try {
@@ -269,6 +271,10 @@ public static class SeasonStrategyEngine {
 
             client.DefaultRequestHeaders.Authorization = null;
 
+            var questionsSection = !string.IsNullOrWhiteSpace(athleteQuestions)
+                ? $"\n\nATHLETE QUESTIONS (answer these explicitly at the end):\n{athleteQuestions}"
+                : "";
+
             var prompt = $@"ATHLETE GOAL: {(customRace?.Name ?? envGetter("GOAL_RACE_TYPE"))} on {(customRace?.Date ?? envGetter("GOAL_RACE_DATE"))} (Target Time: {(customRace?.TargetTime ?? envGetter("GOAL_RACE_TIME"))}).
 HISTORY CONTEXT (FULL SEASON SCAN):
 {historySummary}
@@ -282,6 +288,7 @@ TASK: Deep Season Strategy. Include:
 3. 3-TIER PACE STRATEGY (Optimistic/Realistic/Pessimistic)
 4. NUTRITION & LOGISTICS
 5. ACTION PLAN (Next 7 Days)
+{(!string.IsNullOrWhiteSpace(athleteQuestions) ? "6. ATHLETE Q&A (answer each question above)" : "")}
 
 INSTRUCTION: Professional coaching tone. Markdown. Footer processed stamp: {timeGetter()}";
 
