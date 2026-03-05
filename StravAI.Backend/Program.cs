@@ -272,12 +272,20 @@ public static class SeasonStrategyEngine {
 
             var questionsSection = !string.IsNullOrWhiteSpace(athleteQuestions) ? $"\n\nATHLETE QUESTIONS: The athlete has asked the following specific questions. You MUST answer EACH question below one by one, using the actual activity data provided. Do NOT invent or substitute different questions. Answer only what is asked:\n{athleteQuestions}" : "";
 
-            var prompt = $@"ATHLETE GOAL: {(customRace?.Name ?? envGetter("GOAL_RACE_TYPE"))} on {(customRace?.Date ?? envGetter("GOAL_RACE_DATE"))} (Target Time: {(customRace?.TargetTime ?? envGetter("GOAL_RACE_TIME"))}).
+            var prompt = $@"
+{(!string.IsNullOrWhiteSpace(athleteQuestions) ? 
+$@"⚠️ PRIORITY TASK: The athlete has asked the following questions. You MUST answer ALL of them in section 6, one by one, numbered, using ONLY the actual activity data below. This is mandatory.
+ATHLETE QUESTIONS:
+{athleteQuestions}
+---" : "")}
+
+ATHLETE GOAL: {(customRace?.Name ?? envGetter("GOAL_RACE_TYPE"))} on {(customRace?.Date ?? envGetter("GOAL_RACE_DATE"))} (Target Time: {(customRace?.TargetTime ?? envGetter("GOAL_RACE_TIME"))}).
+
 HISTORY CONTEXT (FULL SEASON SCAN):
 {historySummary}
 
 RACE SPECIFICS:
-{ (customRace?.RaceDetails ?? "N/A") }
+{(customRace?.RaceDetails ?? "N/A")}
 
 TASK: Deep Season Strategy. Include:
 1. EXECUTIVE SUMMARY
@@ -285,7 +293,8 @@ TASK: Deep Season Strategy. Include:
 3. 3-TIER PACE STRATEGY (Optimistic/Realistic/Pessimistic)
 4. NUTRITION & LOGISTICS
 5. ACTION PLAN (Next 7 Days)
-{(!string.IsNullOrWhiteSpace(athleteQuestions) ? "6. ATHLETE Q&A — Answer EACH of the athlete's questions listed above verbatim, one by one, numbered. Use only the data provided. Do not skip, rephrase, or replace any question." : "")}
+{(!string.IsNullOrWhiteSpace(athleteQuestions) ? 
+@"6. ATHLETE Q&A — Answer each question listed at the TOP of this prompt, numbered, one by one. Do NOT skip, invent, or substitute any question. Use only the data provided." : "")}
 
 INSTRUCTION: Professional coaching tone. Markdown. Footer processed stamp: {timeGetter()}";
 
