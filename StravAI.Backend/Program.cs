@@ -148,8 +148,6 @@ app.MapPost("/sync/custom-race", ([FromBody] CustomRaceRequest req, IHttpClientF
     return Results.Accepted();
 });
 
-public record SeasonRequest(string? Questions);
-
 app.MapPost("/sync/season", ([FromBody] SeasonRequest? req, IHttpClientFactory clientFactory) => {
     AddLog("AUTH_ACTION: Deep Season Strategy Update triggered.");
     _ = Task.Run(() => SeasonStrategyEngine.ProcessSeasonAnalysisAsync(clientFactory, GetEnv, logs, GetCetTimestamp, CompactSummarize, null, req?.Questions));
@@ -353,3 +351,4 @@ public class SeasonBackgroundWorker : BackgroundService {
 }
 
 public record StravaWebhookEvent([property: JsonPropertyName("object_id")] long ObjectId, [property: JsonPropertyName("object_type")] string ObjectType);
+public record SeasonRequest(string? Questions);
