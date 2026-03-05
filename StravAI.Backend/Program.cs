@@ -150,6 +150,7 @@ app.MapPost("/sync/custom-race", ([FromBody] CustomRaceRequest req, IHttpClientF
 
 app.MapPost("/sync/season", ([FromBody] SeasonRequest? req, IHttpClientFactory clientFactory) => {
     AddLog("AUTH_ACTION: Deep Season Strategy Update triggered.");
+    AddLog($"DEBUG: Questions received = '{req?.Questions ?? "NULL"}'");
     _ = Task.Run(() => SeasonStrategyEngine.ProcessSeasonAnalysisAsync(clientFactory, GetEnv, logs, GetCetTimestamp, CompactSummarize, null, req?.Questions));
     return Results.Accepted();
 });
