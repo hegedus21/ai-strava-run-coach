@@ -269,9 +269,7 @@ public static class SeasonStrategyEngine {
 
             client.DefaultRequestHeaders.Authorization = null;
 
-            var questionsSection = !string.IsNullOrWhiteSpace(athleteQuestions)
-                ? $"\n\nATHLETE QUESTIONS (answer these explicitly at the end):\n{athleteQuestions}"
-                : "";
+            var questionsSection = !string.IsNullOrWhiteSpace(athleteQuestions) ? $"\n\nATHLETE QUESTIONS: The athlete has asked the following specific questions. You MUST answer EACH question below one by one, using the actual activity data provided. Do NOT invent or substitute different questions. Answer only what is asked:\n{athleteQuestions}" : "";
 
             var prompt = $@"ATHLETE GOAL: {(customRace?.Name ?? envGetter("GOAL_RACE_TYPE"))} on {(customRace?.Date ?? envGetter("GOAL_RACE_DATE"))} (Target Time: {(customRace?.TargetTime ?? envGetter("GOAL_RACE_TIME"))}).
 HISTORY CONTEXT (FULL SEASON SCAN):
@@ -286,7 +284,7 @@ TASK: Deep Season Strategy. Include:
 3. 3-TIER PACE STRATEGY (Optimistic/Realistic/Pessimistic)
 4. NUTRITION & LOGISTICS
 5. ACTION PLAN (Next 7 Days)
-{(!string.IsNullOrWhiteSpace(athleteQuestions) ? "6. ATHLETE Q&A (answer each question above)" : "")}
+{(!string.IsNullOrWhiteSpace(athleteQuestions) ? "6. ATHLETE Q&A — Answer EACH of the athlete's questions listed above verbatim, one by one, numbered. Use only the data provided. Do not skip, rephrase, or replace any question." : "")}
 
 INSTRUCTION: Professional coaching tone. Markdown. Footer processed stamp: {timeGetter()}";
 
