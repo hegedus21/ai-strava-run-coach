@@ -71,7 +71,7 @@ string CompactSummarize(List<JsonElement> activities) {
     }
 
     sb.AppendLine("\nRECENT EFFORTS:");
-    foreach (var a in activities.Take(15)) {
+    foreach (var a in activities.Take(200)) {
         var date = a.GetProperty("start_date").GetString();
         var dist = a.GetProperty("distance").GetDouble() / 1000;
         var speed = a.GetProperty("average_speed").GetDouble();
