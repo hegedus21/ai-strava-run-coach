@@ -393,19 +393,34 @@ public static class SeasonStrategyEngine {
             var last7 = now.AddDays(-7);
             var prev14 = now.AddDays(-14);
 
-            var last7DaysKm = historyData?
-                .Where(a => a.TryGetProperty("distance", out _))
-                .Where(a => DateTime.Parse(a.GetProperty("start_date").GetString()!) > last7)
-                .Sum(a => a.GetProperty("distance").GetDouble()) / 1000;
+            var last7DaysKm = 0.0;
+            var prev7DaysKm = 0.0;
 
-            var prev7DaysKm = historyData?
-                .Where(a => a.TryGetProperty("distance", out _))
-                .Where(a =>
-                        {
-                            var dt = DateTime.Parse(a.GetProperty("start_date").GetString()!);
-                            return dt <= last7 && dt > prev14;
-                        })
-                .Sum(a => a.GetProperty("distance").GetDouble()) / 1000;
+            foreach (var a in historyData ?? Enumerable.Empty<JsonElement>())
+            {
+                if (!a.TryGetProperty("distance", out var distEl)) continue;
+                if (!a.TryGetProperty("start_date", out var dateEl)) continue;
+
+                var dateStr = dateEl.GetString();
+                if (string.IsNullOrEmpty(dateStr)) continue;
+
+                var dt = DateTime.Parse(
+                            dateStr,
+                            null,
+                            System.Globalization.DateTimeStyles.AdjustToUniversal
+                        );
+
+                var km = distEl.GetDouble() / 1000;
+
+                if (dt > last7)
+                {
+                    last7DaysKm += km;
+                }
+                else if (dt > prev14 && dt <= last7)
+                {
+                    prev7DaysKm += km;
+                }
+            }
 
             // Build metrics string
             var athleteMetrics = "";
