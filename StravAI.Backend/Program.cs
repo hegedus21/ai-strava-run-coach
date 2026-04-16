@@ -405,9 +405,12 @@ public static class SeasonStrategyEngine {
                 var dateStr = dateEl.GetString();
                 if (string.IsNullOrWhiteSpace(dateStr)) continue;
 
-                if (!DateTimeOffset.TryParse(dateStr, null,
-                        System.Globalization.DateTimeStyles.AssumeUniversal,
-                        out var dto)) continue;
+                if (!DateTimeOffset.TryParse(
+                            dateStr,
+                            System.Globalization.CultureInfo.InvariantCulture,
+                            System.Globalization.DateTimeStyles.AssumeUniversal,
+                            out var dto
+                )) continue;
 
                 var km = distEl.GetDouble() / 1000;
 
@@ -451,15 +454,15 @@ public static class SeasonStrategyEngine {
             }
 
             // Weekly volume (last 4 weeks)
+            var cutoff = DateTimeOffset.UtcNow.AddDays(-28);
+
             var last4WeeksKm = historyData?
-                                .Where(a => a.TryGetProperty("distance", out var d))
-                                .Where(a =>
-                                        {
-                                            var s = a.GetProperty("start_date").GetString();
-                                            return DateTimeOffset.TryParse(s, out var dto) &&
-                                            dto > DateTimeOffset.UtcNow.AddDays(-28);
-                                        })
-                                .Sum(a => a.GetProperty("distance").GetDouble()) / 1000;
+                    .Where(a =>
+                    {
+                        if (!a.TryGetProperty("start_date", out var s)) return false;
+                        return DateTimeOffset.TryParse(s.GetString(), System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeUniversal, out var dto) && dto > cutoff;
+                    })
+                    .Sum(a => a.GetProperty("distance").GetDouble()) / 1000;
 
             if (last4WeeksKm > 0)
             {
