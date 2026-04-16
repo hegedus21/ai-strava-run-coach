@@ -438,7 +438,7 @@ public static class SeasonStrategyEngine {
                 athleteMetrics += $"Last 4 weeks volume={last4WeeksKm:F0} km\n";
             }
 
-            if (last7DaysKm > prev7DaysKm * 1.5)
+            if (prev7DaysKm > 0 && last7DaysKm > prev7DaysKm * 1.5)
             {
                 athleteMetrics += $"⚠️ Load spike detected ({last7DaysKm:F0}km vs {prev7DaysKm:F0}km)\n";
             }            
