@@ -105,7 +105,7 @@ string CompactSummarize(List<JsonElement> activities) {
         .GroupBy(a => a.Date.AddDays(-(int)a.Date.DayOfWeek + (int)DayOfWeek.Monday).ToString("yyyy-MM-dd"))
         .OrderByDescending(g => g.Key)) {
         var totalKm  = week.Sum(a => a.DistKm);
-        var avgPace = month
+        var avgPace = week
                         .Where(a => a.Speed > 0)
                         .Select(a => 16.6667 / a.Speed)
                         .DefaultIfEmpty(0)
