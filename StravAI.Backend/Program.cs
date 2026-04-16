@@ -55,29 +55,65 @@ string GetCetTimestamp() {
 
 string CompactSummarize(List<JsonElement> activities) {
     if (activities == null || activities.Count == 0) return "No history found.";
-    var grouped = activities
-        .Where(a => a.TryGetProperty("type", out var t) && t.ValueKind == JsonValueKind.String && t.GetString() == "Run")
-        .GroupBy(a => DateTime.Parse(a.GetProperty("start_date").GetString()!).ToString("yyyy-MM"))
-        .OrderByDescending(g => g.Key)
-        .Take(6);
+
+    var runs = activities
+        .Where(a => a.TryGetProperty("type", out var t) &&
+                    t.ValueKind == JsonValueKind.String &&
+                    t.GetString() == "Run")
+        .Select(a => new {
+            Date   = DateTime.Parse(a.GetProperty("start_date").GetString()!),
+            DistKm = a.GetProperty("distance").GetDouble() / 1000,
+            Speed  = a.GetProperty("average_speed").GetDouble(),
+            HrAvg  = a.TryGetProperty("average_heartrate", out var hr) && hr.ValueKind == JsonValueKind.Number
+                       ? hr.GetDouble() : (double?)null
+        })
+        .OrderByDescending(a => a.Date)
+        .ToList();
 
     var sb = new System.Text.StringBuilder();
-    sb.AppendLine("MONTHLY PERFORMANCE SUMMARY:");
-    foreach (var month in grouped) {
-        var totalKm = month.Sum(a => a.GetProperty("distance").GetDouble()) / 1000;
-        var avgSpeed = month.Average(a => a.GetProperty("average_speed").GetDouble());
-        var avgPace = avgSpeed > 0 ? (16.6667 / avgSpeed) : 0;
-        sb.AppendLine($"- {month.Key}: {totalKm:F1}km, Avg Pace: {avgPace:F2}m/k");
+
+    sb.AppendLine("## MONTHLY SUMMARY (all-time)");
+    foreach (var month in runs.GroupBy(a => a.Date.ToString("yyyy-MM")).OrderByDescending(g => g.Key)) {
+        var totalKm  = month.Sum(a => a.DistKm);
+        var avgPace  = month.Average(a => a.Speed > 0 ? 16.6667 / a.Speed : 0);
+        var avgHr    = month.Where(a => a.HrAvg.HasValue).Select(a => a.HrAvg!.Value).DefaultIfEmpty(0).Average();
+        var longRun  = month.Max(a => a.DistKm);
+        var runCount = month.Count();
+        sb.AppendLine($"- {month.Key}: {runCount} runs, {totalKm:F1}km, " +
+                      $"avg pace {avgPace:F2}m/k, longest {longRun:F1}km" +
+                      (avgHr > 0 ? $", avg HR {avgHr:F0}bpm" : ""));
     }
 
-    sb.AppendLine("\nRECENT EFFORTS:");
-    foreach (var a in activities.Take(200)) {
-        var date = a.GetProperty("start_date").GetString();
-        var dist = a.GetProperty("distance").GetDouble() / 1000;
-        var speed = a.GetProperty("average_speed").GetDouble();
-        var pace = speed > 0 ? (16.6667 / speed) : 0;
-        sb.AppendLine($"- {date}: {dist:F2}km @ {pace:F2}m/k");
+    sb.AppendLine("\n## WEEKLY DETAIL (last 8 weeks)");
+    var eightWeeksAgo = DateTime.UtcNow.AddDays(-56);
+    foreach (var week in runs
+        .Where(a => a.Date >= eightWeeksAgo)
+        .GroupBy(a => a.Date.AddDays(-(int)a.Date.DayOfWeek + (int)DayOfWeek.Monday).ToString("yyyy-MM-dd"))
+        .OrderByDescending(g => g.Key)) {
+        var totalKm  = week.Sum(a => a.DistKm);
+        var avgPace  = week.Average(a => a.Speed > 0 ? 16.6667 / a.Speed : 0);
+        var longRun  = week.Max(a => a.DistKm);
+        sb.AppendLine($"- Week of {week.Key}: {week.Count()} runs, {totalKm:F1}km, " +
+                      $"avg pace {avgPace:F2}m/k, longest {longRun:F1}km");
     }
+
+    sb.AppendLine("\n## RECENT INDIVIDUAL RUNS (last 30 days)");
+    foreach (var a in runs.Where(r => r.Date >= DateTime.UtcNow.AddDays(-30))) {
+        var pace = a.Speed > 0 ? 16.6667 / a.Speed : 0;
+        sb.AppendLine($"- {a.Date:yyyy-MM-dd}: {a.DistKm:F2}km @ {pace:F2}m/k" +
+                      (a.HrAvg.HasValue ? $", HR {a.HrAvg:F0}bpm" : ""));
+    }
+
+    sb.AppendLine("\n## PERSONAL BESTS / NOTABLE RUNS");
+    foreach (var a in runs.OrderByDescending(a => a.DistKm).Take(5)) {
+        var pace = a.Speed > 0 ? 16.6667 / a.Speed : 0;
+        sb.AppendLine($"- LONGEST: {a.Date:yyyy-MM-dd}: {a.DistKm:F2}km @ {pace:F2}m/k");
+    }
+    foreach (var a in runs.Where(a => a.DistKm >= 5).OrderBy(a => a.Speed > 0 ? 16.6667 / a.Speed : 999).Take(5)) {
+        var pace = a.Speed > 0 ? 16.6667 / a.Speed : 0;
+        sb.AppendLine($"- FASTEST: {a.Date:yyyy-MM-dd}: {a.DistKm:F2}km @ {pace:F2}m/k");
+    }
+
     return sb.ToString();
 }
 
@@ -255,6 +291,26 @@ public static class SeasonStrategyEngine {
         } catch { return null; }
     }
 
+    public static async Task<List<JsonElement>> GetAllActivitiesAsync(HttpClient client, int maxCount = 800)
+    {
+        var all = new List<JsonElement>();
+        int page = 1;
+        const int perPage = 200;
+
+        while (all.Count < maxCount)
+        {
+            var batch = await client.GetFromJsonAsync<List<JsonElement>>(
+                $"https://www.strava.com/api/v3/athlete/activities?per_page={perPage}&page={page}");
+
+            if (batch == null || batch.Count == 0) break;
+
+            all.AddRange(batch);
+            if (batch.Count < perPage) break;
+            page++;
+        }
+         return all.Take(maxCount).ToList();
+    }
+
     public static async Task ProcessSeasonAnalysisAsync(IHttpClientFactory clientFactory, Func<string, string> envGetter, ConcurrentQueue<string> logs, Func<string> timeGetter, Func<List<JsonElement>, string> summarizer, CustomRaceRequest? customRace = null, string? athleteQuestions = null) {
         void L(string m, string lvl = "INFO") => logs.Enqueue($"[{DateTime.UtcNow:HH:mm:ss}] [{lvl}] {m}");
 
@@ -265,7 +321,7 @@ public static class SeasonStrategyEngine {
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
             L("Gathering Multi-Month Performance Trends...");
-            var historyData = await client.GetFromJsonAsync<List<JsonElement>>("https://www.strava.com/api/v3/athlete/activities?per_page=200");
+            var historyData = await GetAllActivitiesAsync(client, maxCount: 800);
             var historySummary = summarizer(historyData ?? new());
 
             client.DefaultRequestHeaders.Authorization = null;
