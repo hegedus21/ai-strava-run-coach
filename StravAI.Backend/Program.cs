@@ -456,11 +456,16 @@ public static class SeasonStrategyEngine {
             }
 
             // Avg HR
-            var avgHrAll = historyData?
-                            .Where(a => a.TryGetProperty("average_heartrate", out var hr) && hr.ValueKind == JsonValueKind.Number)
-                            .Select(a => hr.GetDouble())
-                            .DefaultIfEmpty()
-                            .Average();
+            var hrValues = historyData?
+                    .Select(a => a.TryGetProperty("average_heartrate", out var hr) &&
+                                 hr.ValueKind == JsonValueKind.Number
+                                 ? hr.GetDouble()
+                                 : (double?)null)
+                    .Where(x => x.HasValue)
+                    .Select(x => x!.Value)
+                    .ToList();
+
+            var avgHrAll = hrValues?.DefaultIfEmpty().Average() ?? 0;
 
             if (avgHrAll > 0)
             {
