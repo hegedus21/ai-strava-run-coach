@@ -65,7 +65,9 @@ string CompactSummarize(List<JsonElement> activities) {
             DistKm = a.GetProperty("distance").GetDouble() / 1000,
             Speed  = a.GetProperty("average_speed").GetDouble(),
             HrAvg  = a.TryGetProperty("average_heartrate", out var hr) && hr.ValueKind == JsonValueKind.Number
-                       ? hr.GetDouble() : (double?)null
+                       ? hr.GetDouble() : (double?)null,
+            NP = a.TryGetProperty("weighted_average_watts", out var np) && np.ValueKind == JsonValueKind.Number
+                       ? np.GetDouble() : (double?)null
         })
         .OrderByDescending(a => a.Date)
         .ToList();
@@ -78,10 +80,13 @@ string CompactSummarize(List<JsonElement> activities) {
         var avgPace  = month.Average(a => a.Speed > 0 ? 16.6667 / a.Speed : 0);
         var avgHr    = month.Where(a => a.HrAvg.HasValue).Select(a => a.HrAvg!.Value).DefaultIfEmpty(0).Average();
         var longRun  = month.Max(a => a.DistKm);
+        var avgNP = month.Where(a => a.NP.HasValue).Select(a => a.NP!.Value).DefaultIfEmpty(0).Average();
+
         var runCount = month.Count();
         sb.AppendLine($"- {month.Key}: {runCount} runs, {totalKm:F1}km, " +
                       $"avg pace {avgPace:F2}m/k, longest {longRun:F1}km" +
-                      (avgHr > 0 ? $", avg HR {avgHr:F0}bpm" : ""));
+                      (avgHr > 0 ? $", avg HR {avgHr:F0}bpm" : "") +
+                      (avgNP > 0 ? $", avg NP {avgNP:F0}W" : ""));
     }
 
     sb.AppendLine("\n## WEEKLY DETAIL (last 8 weeks)");
