@@ -112,10 +112,15 @@ string CompactSummarize(List<JsonElement> activities) {
                         .Average();
         var longRun  = week.Max(a => a.DistKm);
         var npValues = week.Where(a => a.NP.HasValue).Select(a => a.NP!.Value).ToList();
+        var avgHr = week.Where(a => a.HrAvg.HasValue)
+                .Select(a => a.HrAvg!.Value)
+                .DefaultIfEmpty(0)
+                .Average();
         double? avgNP = npValues.Count > 0 ? npValues.Average() : null;
         sb.AppendLine($"- Week of {week.Key}: {week.Count()} runs, {totalKm:F1}km, " +
-              $"avg pace {avgPace:F2}m/k, longest {longRun:F1}km" +
-              (avgNP.HasValue ? $", avg NP {avgNP.Value:F0}W" : ""));
+                    $"avg pace {avgPace:F2}m/k, longest {longRun:F1}km" +
+                    (avgHr > 0 ? $", avg HR {avgHr:F0}bpm" : "") +
+                    (avgNP.HasValue ? $", avg NP {avgNP.Value:F0}W" : ""));
     }
 
     sb.AppendLine("\n## RECENT INDIVIDUAL RUNS (last 30 days)");
@@ -369,7 +374,10 @@ public static class SeasonStrategyEngine {
                             .Where(a => a.TryGetProperty("weighted_average_watts", out var np) && np.ValueKind == JsonValueKind.Number)
                             .Select(a => np.GetDouble())
                             .OrderByDescending(x => x)
-                            .Take(10) // top 10 effort
+                            .Where(a => a.TryGetProperty("distance", out var d) && d.GetDouble() > 5000) // min 5km
+                            .Select(a => np.GetDouble())
+                            .OrderByDescending(x => x)
+                            .Take(5)
                             .ToList();
 
             double? estimatedFtp = null;
@@ -380,10 +388,60 @@ public static class SeasonStrategyEngine {
                 estimatedFtp = avgTopNp * 0.90; // standard approximation
             }
 
+            // --- FATIGUE / LOAD SPIKE DETECTION ---
+            var last7DaysKm = historyData?
+                                .Where(a => a.TryGetProperty("distance", out _))
+                                .Where(a => DateTime.Parse(a.GetProperty("start_date").GetString()!) > DateTime.UtcNow.AddDays(-7))
+                                .Sum(a => a.GetProperty("distance").GetDouble()) / 1000;
+
+            var prev7DaysKm = historyData?
+                                .Where(a => a.TryGetProperty("distance", out _))
+                                .Where(a => {
+                                        var dt = DateTime.Parse(a.GetProperty("start_date").GetString()!);
+                                        return dt <= DateTime.UtcNow.AddDays(-7) && dt > DateTime.UtcNow.AddDays(-14);
+                                })
+                                .Sum(a => a.GetProperty("distance").GetDouble()) / 1000;
+
             // Build metrics string
-            var athleteMetrics = estimatedFtp.HasValue
-                                    ? $"\n\nATHLETE FITNESS METRICS:\nEstimated FTP={estimatedFtp.Value:F0}W"
-                                    : "";
+            var athleteMetrics = "";
+
+            if (estimatedFtp.HasValue)
+            {
+                athleteMetrics += $"Estimated FTP={estimatedFtp.Value:F0}W\n";
+            }
+
+            // Avg HR
+            var avgHrAll = historyData?
+                            .Where(a => a.TryGetProperty("average_heartrate", out var hr) && hr.ValueKind == JsonValueKind.Number)
+                            .Select(a => hr.GetDouble())
+                            .DefaultIfEmpty()
+                            .Average();
+
+            if (avgHrAll > 0)
+            {
+                athleteMetrics += $"Avg HR={avgHrAll:F0} bpm\n";
+            }
+
+            // Weekly volume (last 4 weeks)
+            var last4WeeksKm = historyData?
+                                .Where(a => a.TryGetProperty("distance", out var d))
+                                .Where(a => DateTime.Parse(a.GetProperty("start_date").GetString()!) > DateTime.UtcNow.AddDays(-28))
+                                .Sum(a => a.GetProperty("distance").GetDouble()) / 1000;
+
+            if (last4WeeksKm > 0)
+            {
+                athleteMetrics += $"Last 4 weeks volume={last4WeeksKm:F0} km\n";
+            }
+
+            if (last7DaysKm > prev7DaysKm * 1.5)
+            {
+                athleteMetrics += $"⚠️ Load spike detected ({last7DaysKm:F0}km vs {prev7DaysKm:F0}km)\n";
+            }            
+
+            if (!string.IsNullOrWhiteSpace(athleteMetrics))
+            {
+                athleteMetrics = $"\n\nATHLETE FITNESS METRICS:\n{athleteMetrics}";
+            }
 
             var questionsSection = !string.IsNullOrWhiteSpace(athleteQuestions) ? $"\n\nATHLETE QUESTIONS: The athlete has asked the following specific questions. You MUST answer EACH question below one by one, using the actual activity data provided. Do NOT invent or substitute different questions. Answer only what is asked:\n{athleteQuestions}" : "";
 
@@ -406,7 +464,11 @@ RACE SPECIFICS:
 
 TASK: Deep Season Strategy. Include:
 1. EXECUTIVE SUMMARY
-2. FEASIBILITY (FTP/Aerobic Base + PROBABILITY %)
+2. FEASIBILITY ANALYSIS
+- Estimated FTP interpretation
+- Aerobic base evaluation (volume trends)
+- Fatigue / risk indicators
+- Probability of success (%)
 3. 3-TIER PACE STRATEGY (Optimistic/Realistic/Pessimistic)
 4. NUTRITION & LOGISTICS
 5. ACTION PLAN (Next 7 Days)
