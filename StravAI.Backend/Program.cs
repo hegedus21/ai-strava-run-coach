@@ -421,6 +421,15 @@ public static class SeasonStrategyEngine {
                 }
             }
 
+            // --- ACUTE / CHRONIC LOAD (ACWR) ---
+            double chronicLoad = (prev7DaysKm / 2.0) + 1; // smoothing + avoid div0
+            double acwr = chronicLoad > 0 ? last7DaysKm / chronicLoad : 0;
+
+            string acwrStatus =
+                acwr < 0.8 ? "UNDERTRAINING" :
+                acwr <= 1.3 ? "OPTIMAL" :
+                "INJURY RISK";
+
             // Build metrics string
             var athleteMetrics = "";
 
@@ -444,7 +453,12 @@ public static class SeasonStrategyEngine {
             // Weekly volume (last 4 weeks)
             var last4WeeksKm = historyData?
                                 .Where(a => a.TryGetProperty("distance", out var d))
-                                .Where(a => DateTimeOffset.Parse(a.GetProperty("start_date").GetString()!).UtcDateTime > DateTime.UtcNow.AddDays(-28))
+                                .Where(a =>
+                                        {
+                                            var s = a.GetProperty("start_date").GetString();
+                                            return DateTimeOffset.TryParse(s, out var dto) &&
+                                            dto > DateTimeOffset.UtcNow.AddDays(-28);
+                                        })
                                 .Sum(a => a.GetProperty("distance").GetDouble()) / 1000;
 
             if (last4WeeksKm > 0)
@@ -455,7 +469,14 @@ public static class SeasonStrategyEngine {
             if (prev7DaysKm > 0 && last7DaysKm > prev7DaysKm * 1.5)
             {
                 athleteMetrics += $"⚠️ Load spike detected ({last7DaysKm:F0}km vs {prev7DaysKm:F0}km)\n";
-            }            
+            }
+
+            athleteMetrics += $"ACWR={acwr:F2} ({acwrStatus})\n";
+
+            if (acwr > 1.3)
+            {
+                athleteMetrics += "⚠️ HIGH INJURY RISK ZONE (ACWR)\n";
+            }        
 
             if (!string.IsNullOrWhiteSpace(athleteMetrics))
             {
@@ -488,6 +509,9 @@ TASK: Deep Season Strategy. Include:
 - Aerobic base evaluation (volume trends)
 - Fatigue / risk indicators
 - Probability of success (%)
+- Interpret ACWR (Acute/Chronic Workload Ratio)
+  <0.8 undertraining, 0.8–1.3 optimal, >1.3 injury risk
+  and adjust training recommendations accordingly
 3. 3-TIER PACE STRATEGY (Optimistic/Realistic/Pessimistic)
 4. NUTRITION & LOGISTICS
 5. ACTION PLAN (Next 7 Days)
