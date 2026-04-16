@@ -389,18 +389,23 @@ public static class SeasonStrategyEngine {
             }
 
             // --- FATIGUE / LOAD SPIKE DETECTION ---
+            var now = DateTime.UtcNow;
+            var last7 = now.AddDays(-7);
+            var prev14 = now.AddDays(-14);
+
             var last7DaysKm = historyData?
-                                .Where(a => a.TryGetProperty("distance", out _))
-                                .Where(a => DateTime.Parse(a.GetProperty("start_date").GetString()!) > DateTime.UtcNow.AddDays(-7))
-                                .Sum(a => a.GetProperty("distance").GetDouble()) / 1000;
+                .Where(a => a.TryGetProperty("distance", out _))
+                .Where(a => DateTime.Parse(a.GetProperty("start_date").GetString()!) > last7)
+                .Sum(a => a.GetProperty("distance").GetDouble()) / 1000;
 
             var prev7DaysKm = historyData?
-                                .Where(a => a.TryGetProperty("distance", out _))
-                                .Where(a => {
-                                        var dt = DateTime.Parse(a.GetProperty("start_date").GetString()!);
-                                        return dt <= DateTime.UtcNow.AddDays(-7) && dt > DateTime.UtcNow.AddDays(-14);
-                                })
-                                .Sum(a => a.GetProperty("distance").GetDouble()) / 1000;
+                .Where(a => a.TryGetProperty("distance", out _))
+                .Where(a =>
+                        {
+                            var dt = DateTime.Parse(a.GetProperty("start_date").GetString()!);
+                            return dt <= last7 && dt > prev14;
+                        })
+                .Sum(a => a.GetProperty("distance").GetDouble()) / 1000;
 
             // Build metrics string
             var athleteMetrics = "";
