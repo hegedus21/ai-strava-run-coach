@@ -371,14 +371,15 @@ public static class SeasonStrategyEngine {
 
             // --- AUTO FTP ESTIMATION ---
             var npValues = historyData?
-                            .Where(a => a.TryGetProperty("weighted_average_watts", out var np) && np.ValueKind == JsonValueKind.Number)
-                            .Select(a => np.GetDouble())
-                            .OrderByDescending(x => x)
-                            .Where(a => a.TryGetProperty("distance", out var d) && d.GetDouble() > 5000) // min 5km
-                            .Select(a => np.GetDouble())
-                            .OrderByDescending(x => x)
-                            .Take(5)
-                            .ToList();
+                    .Where(a =>
+                        a.TryGetProperty("weighted_average_watts", out var np) &&
+                        np.ValueKind == JsonValueKind.Number &&
+                        a.TryGetProperty("distance", out var d) &&
+                        d.GetDouble() > 5000)
+                    .Select(a => a.GetProperty("weighted_average_watts").GetDouble())
+                    .OrderByDescending(x => x)
+                    .Take(5)
+                    .ToList();
 
             double? estimatedFtp = null;
 
@@ -402,16 +403,19 @@ public static class SeasonStrategyEngine {
                 if (!a.TryGetProperty("start_date", out var dateEl)) continue;
 
                 var dateStr = dateEl.GetString();
+                if (string.IsNullOrWhiteSpace(dateStr)) continue;
 
-                if (!DateTimeOffset.TryParse(dateStr, out var dto)) continue;
-                
+                if (!DateTimeOffset.TryParse(dateStr, null,
+                        System.Globalization.DateTimeStyles.AssumeUniversal,
+                        out var dto)) continue;
+
                 var km = distEl.GetDouble() / 1000;
 
                 if (dto > last7)
                 {
                     last7DaysKm += km;
                 }
-                else if (dto > prev14 && dt <= last7)
+                else if (dto > prev14 && dto <= last7)
                 {
                     prev7DaysKm += km;
                 }
@@ -440,7 +444,7 @@ public static class SeasonStrategyEngine {
             // Weekly volume (last 4 weeks)
             var last4WeeksKm = historyData?
                                 .Where(a => a.TryGetProperty("distance", out var d))
-                                .Where(a => DateTime.Parse(a.GetProperty("start_date").GetString()!) > DateTime.UtcNow.AddDays(-28))
+                                .Where(a => DateTimeOffset.Parse(a.GetProperty("start_date").GetString()!).UtcDateTime > DateTime.UtcNow.AddDays(-28))
                                 .Sum(a => a.GetProperty("distance").GetDouble()) / 1000;
 
             if (last4WeeksKm > 0)
