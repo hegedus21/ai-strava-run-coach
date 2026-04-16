@@ -425,13 +425,17 @@ public static class SeasonStrategyEngine {
             }
 
             // --- ACUTE / CHRONIC LOAD (ACWR) ---
-            var prev28DaysKm = historyData?
+            var prev28DaysKm = (historyData?
                     .Where(a =>
                     {
                         var s = a.GetProperty("start_date").GetString();
-                        return DateTimeOffset.TryParse(s, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeUniversal, out var dto) &&
-                           dto > DateTimeOffset.UtcNow.AddDays(-28) &&
-                           dto <= DateTimeOffset.UtcNow.AddDays(-7);
+                        return DateTimeOffset.TryParse(
+                                   s,
+                                   System.Globalization.CultureInfo.InvariantCulture,
+                                   System.Globalization.DateTimeStyles.AssumeUniversal,
+                                    out var dto)
+                           && dto > DateTimeOffset.UtcNow.AddDays(-28)
+                           && dto <= DateTimeOffset.UtcNow.AddDays(-7);
                     })
                     .Sum(a => a.GetProperty("distance").GetDouble()) ?? 0) / 1000.0;
 
