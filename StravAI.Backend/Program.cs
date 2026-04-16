@@ -402,21 +402,16 @@ public static class SeasonStrategyEngine {
                 if (!a.TryGetProperty("start_date", out var dateEl)) continue;
 
                 var dateStr = dateEl.GetString();
-                if (string.IsNullOrEmpty(dateStr)) continue;
 
-                var dt = DateTime.Parse(
-                            dateStr,
-                            null,
-                            System.Globalization.DateTimeStyles.AdjustToUniversal
-                        );
-
+                if (!DateTimeOffset.TryParse(dateStr, out var dto)) continue;
+                
                 var km = distEl.GetDouble() / 1000;
 
-                if (dt > last7)
+                if (dto > last7)
                 {
                     last7DaysKm += km;
                 }
-                else if (dt > prev14 && dt <= last7)
+                else if (dto > prev14 && dt <= last7)
                 {
                     prev7DaysKm += km;
                 }
