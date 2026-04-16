@@ -425,8 +425,18 @@ public static class SeasonStrategyEngine {
             }
 
             // --- ACUTE / CHRONIC LOAD (ACWR) ---
-            double chronicLoad = (prev7DaysKm / 2.0) + 1; // smoothing + avoid div0
-            double acwr = chronicLoad > 0 ? last7DaysKm / chronicLoad : 0;
+            var prev28DaysKm = historyData?
+                    .Where(a =>
+                    {
+                        var s = a.GetProperty("start_date").GetString();
+                        return DateTimeOffset.TryParse(s, System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.AssumeUniversal, out var dto) &&
+                           dto > DateTimeOffset.UtcNow.AddDays(-28) &&
+                           dto <= DateTimeOffset.UtcNow.AddDays(-7);
+                    })
+                    .Sum(a => a.GetProperty("distance").GetDouble()) / 1000 ?? 0;
+
+            double chronicLoad = (prev28DaysKm / 4.0) + 1; // weekly avg
+            double acwr = last7DaysKm / chronicLoad;
 
             string acwrStatus =
                 acwr < 0.8 ? "UNDERTRAINING" :
@@ -478,7 +488,7 @@ public static class SeasonStrategyEngine {
 
             if (acwr > 1.3)
             {
-                athleteMetrics += "⚠️ HIGH INJURY RISK ZONE (ACWR)\n";
+                athleteMetrics += "If ACWR > 1.3, prioritize injury prevention over performance.)\n";
             }        
 
             if (!string.IsNullOrWhiteSpace(athleteMetrics))
