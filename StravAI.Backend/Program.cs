@@ -61,7 +61,11 @@ string CompactSummarize(List<JsonElement> activities) {
                     t.ValueKind == JsonValueKind.String &&
                     t.GetString() == "Run")
         .Select(a => new {
-            Date   = DateTime.Parse(a.GetProperty("start_date").GetString()!),
+            Date = DateTime.Parse(
+                a.GetProperty("start_date").GetString()!,
+                null,
+                System.Globalization.DateTimeStyles.AdjustToUniversal
+            ),
             DistKm = a.GetProperty("distance").GetDouble() / 1000,
             Speed  = a.GetProperty("average_speed").GetDouble(),
             HrAvg  = a.TryGetProperty("average_heartrate", out var hr) && hr.ValueKind == JsonValueKind.Number
@@ -77,16 +81,21 @@ string CompactSummarize(List<JsonElement> activities) {
     sb.AppendLine("## MONTHLY SUMMARY (all-time)");
     foreach (var month in runs.GroupBy(a => a.Date.ToString("yyyy-MM")).OrderByDescending(g => g.Key)) {
         var totalKm  = month.Sum(a => a.DistKm);
-        var avgPace  = month.Average(a => a.Speed > 0 ? 16.6667 / a.Speed : 0);
+        var avgPace = month
+                        .Where(a => a.Speed > 0)
+                        .Select(a => 16.6667 / a.Speed)
+                        .DefaultIfEmpty(0)
+                        .Average();
         var avgHr    = month.Where(a => a.HrAvg.HasValue).Select(a => a.HrAvg!.Value).DefaultIfEmpty(0).Average();
         var longRun  = month.Max(a => a.DistKm);
-        var avgNP = month.Where(a => a.NP.HasValue).Select(a => a.NP!.Value).DefaultIfEmpty(0).Average();
+        var npValues = month.Where(a => a.NP.HasValue).Select(a => a.NP!.Value).ToList();
+        double? avgNP = npValues.Count > 0 ? npValues.Average() : null;
 
         var runCount = month.Count();
         sb.AppendLine($"- {month.Key}: {runCount} runs, {totalKm:F1}km, " +
                       $"avg pace {avgPace:F2}m/k, longest {longRun:F1}km" +
                       (avgHr > 0 ? $", avg HR {avgHr:F0}bpm" : "") +
-                      (avgNP > 0 ? $", avg NP {avgNP:F0}W" : ""));
+                      (avgNP.HasValue ? $", avg NP {avgNP.Value:F0}W" : ""));
     }
 
     sb.AppendLine("\n## WEEKLY DETAIL (last 8 weeks)");
@@ -96,10 +105,17 @@ string CompactSummarize(List<JsonElement> activities) {
         .GroupBy(a => a.Date.AddDays(-(int)a.Date.DayOfWeek + (int)DayOfWeek.Monday).ToString("yyyy-MM-dd"))
         .OrderByDescending(g => g.Key)) {
         var totalKm  = week.Sum(a => a.DistKm);
-        var avgPace  = week.Average(a => a.Speed > 0 ? 16.6667 / a.Speed : 0);
+        var avgPace = month
+                        .Where(a => a.Speed > 0)
+                        .Select(a => 16.6667 / a.Speed)
+                        .DefaultIfEmpty(0)
+                        .Average();
         var longRun  = week.Max(a => a.DistKm);
+        var npValues = week.Where(a => a.NP.HasValue).Select(a => a.NP!.Value).ToList();
+        double? avgNP = npValues.Count > 0 ? npValues.Average() : null;
         sb.AppendLine($"- Week of {week.Key}: {week.Count()} runs, {totalKm:F1}km, " +
-                      $"avg pace {avgPace:F2}m/k, longest {longRun:F1}km");
+              $"avg pace {avgPace:F2}m/k, longest {longRun:F1}km" +
+              (avgNP.HasValue ? $", avg NP {avgNP.Value:F0}W" : ""));
     }
 
     sb.AppendLine("\n## RECENT INDIVIDUAL RUNS (last 30 days)");
@@ -118,6 +134,23 @@ string CompactSummarize(List<JsonElement> activities) {
         var pace = a.Speed > 0 ? 16.6667 / a.Speed : 0;
         sb.AppendLine($"- FASTEST: {a.Date:yyyy-MM-dd}: {a.DistKm:F2}km @ {pace:F2}m/k");
     }
+
+    sb.AppendLine("\n## PERFORMANCE METRICS (DERIVED)");
+
+    var allNP = runs.Where(a => a.NP.HasValue).Select(a => a.NP!.Value).ToList();
+    double? avgNPAll = allNP.Count > 0 ? allNP.Average() : null;
+
+    var allHr = runs.Where(a => a.HrAvg.HasValue).Select(a => a.HrAvg!.Value).ToList();
+    double? avgHrAll = allHr.Count > 0 ? allHr.Average() : null;
+
+    if (avgNPAll.HasValue)
+        sb.AppendLine($"- Avg Normalized Power (all-time): {avgNPAll.Value:F0}W");
+
+    if (avgHrAll.HasValue)
+        sb.AppendLine($"- Avg Heart Rate (all-time): {avgHrAll.Value:F0} bpm");
+
+    var totalLoad = runs.Sum(a => a.DistKm * (a.NP ?? 200));
+    sb.AppendLine($"- Estimated Training Load: {totalLoad:F0}");
 
     return sb.ToString();
 }
