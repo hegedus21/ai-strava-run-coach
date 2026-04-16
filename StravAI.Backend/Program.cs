@@ -364,6 +364,27 @@ public static class SeasonStrategyEngine {
 
             client.DefaultRequestHeaders.Authorization = null;
 
+            // --- AUTO FTP ESTIMATION ---
+            var npValues = historyData?
+                            .Where(a => a.TryGetProperty("weighted_average_watts", out var np) && np.ValueKind == JsonValueKind.Number)
+                            .Select(a => np.GetDouble())
+                            .OrderByDescending(x => x)
+                            .Take(10) // top 10 effort
+                            .ToList();
+
+            double? estimatedFtp = null;
+
+            if (npValues != null && npValues.Count > 0)
+            {
+                var avgTopNp = npValues.Average();
+                estimatedFtp = avgTopNp * 0.90; // standard approximation
+            }
+
+            // Build metrics string
+            var athleteMetrics = estimatedFtp.HasValue
+                                    ? $"\n\nATHLETE FITNESS METRICS:\nEstimated FTP={estimatedFtp.Value:F0}W"
+                                    : "";
+
             var questionsSection = !string.IsNullOrWhiteSpace(athleteQuestions) ? $"\n\nATHLETE QUESTIONS: The athlete has asked the following specific questions. You MUST answer EACH question below one by one, using the actual activity data provided. Do NOT invent or substitute different questions. Answer only what is asked:\n{athleteQuestions}" : "";
 
             var prompt = $@"
@@ -374,6 +395,8 @@ ATHLETE QUESTIONS:
 ---" : "")}
 
 ATHLETE GOAL: {(customRace?.Name ?? envGetter("GOAL_RACE_TYPE"))} on {(customRace?.Date ?? envGetter("GOAL_RACE_DATE"))} (Target Time: {(customRace?.TargetTime ?? envGetter("GOAL_RACE_TIME"))}).
+
+{athleteMetrics}
 
 HISTORY CONTEXT (FULL SEASON SCAN):
 {historySummary}
